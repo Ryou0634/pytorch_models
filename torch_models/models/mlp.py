@@ -18,7 +18,7 @@ class MLP(nn.Module):
         Activation function. Default Tanh().
     '''
 
-    def __init__(self, dims, activation='Tanh'):
+    def __init__(self, dims, activation='Tanh', dropout=0):
         '''
         Parameters
         ----------
@@ -33,6 +33,7 @@ class MLP(nn.Module):
         for i in range(self.n_hidden):
             setattr(self, 'fc_{}'.format(i), nn.Linear(dims[i], dims[i+1]))
         self.fc_out = nn.Linear(dims[-2], dims[-1])
+        self.dropout = nn.Dropout(p=dropout)
 
         self.criterion = nn.CrossEntropyLoss()
         self.activation = eval('nn.{}()'.format(activation))
@@ -41,10 +42,12 @@ class MLP(nn.Module):
         for i in range(self.n_hidden):
             layer = getattr(self, 'fc_{}'.format(i))
             inputs = self.activation(layer(inputs))
+            inputs = self.dropout(inputs)
         output = self.fc_out(inputs)
         return output
 
     def fit(self, inputs, labels, optimizer):
+        self.train()
         self.zero_grad()
         outputs = self.forward(inputs)
         loss = self.criterion(outputs, labels)
@@ -53,6 +56,7 @@ class MLP(nn.Module):
         return loss.item()
 
     def predict(self, inputs):
+        self.eval()
         with torch.no_grad():
             outputs = self.forward(inputs)
             _, idx = outputs.max(1)
