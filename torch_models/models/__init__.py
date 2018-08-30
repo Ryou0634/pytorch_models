@@ -1,4 +1,4 @@
-from .adversarial_classifier import *
+from .grad_reverse_mlp import *
 from .classifiers import *
 from .functions import *
 from .generators import *
