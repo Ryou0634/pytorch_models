@@ -10,13 +10,13 @@ def get_device(show_log=True):
 
 # trans_func for pytorch
 # Used in my_utils.DataLoader.
-def torch_seq(inputs, targets):
+def seq2label(inputs, targets):
     device = get_device(show_log=False)
     seqs = [torch.LongTensor(seq).to(device) for seq in inputs]
     targets = torch.LongTensor(targets).to(device)
     return seqs, targets
 
-def torch_two_seqs(inputs, targets):
+def twoseq2label(inputs, targets):
     device = get_device(show_log=False)
     seq1s, seq2s = zip(*inputs)
     seq1s = [torch.LongTensor(seq).to(device) for seq in seq1s]
@@ -24,7 +24,13 @@ def torch_two_seqs(inputs, targets):
     targets = torch.LongTensor(targets).to(device)
     return (seq1s, seq2s), targets
 
-def seqs_to_seq(inputs, targets):
+def seq2seq(inputs, targets):
+    device = get_device(show_log=False)
+    src_seq = [torch.LongTensor(seq).to(device) for seq in inputs]
+    tgt_seq = [torch.LongTensor(seq).to(device) for seq in targets]
+    return src_seq, tgt_seq
+
+def twoseq2seq(inputs, targets):
     device = get_device(show_log=False)
     seq1s, seq2s = zip(*inputs)
     seq1s = [torch.LongTensor(seq).to(device) for seq in seq1s]

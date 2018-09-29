@@ -1,3 +1,4 @@
+from .attentions import *
 from .grad_reverse_mlp import *
 from .classifiers import *
 from .functions import *
