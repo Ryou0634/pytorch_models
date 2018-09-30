@@ -81,14 +81,12 @@ class LSTMEncoder(SeqEncoderBase):
             outputs, (hiddens, _) = self.rnn(packed_embeds)
         tensors, lengths = pad_packed_sequence(outputs, batch_first=True)
 
-        for tensor, length in zip(tensors, lengths):
-            tensor[length:] = float('-inf')
-
         # reorder_batch
         _, idxs = torch.sort(torch.tensor(original_idx))
+        lengths = lengths[idxs]
         tensors = tensors[idxs]
         hiddens = hiddens[:, idxs]
-        return tensors, hiddens # (batch, max_length, embed_dim), (num_layers * num_directions, batch, hidden_size)
+        return (tensors, lengths), hiddens # (batch, seq_len, num_directions * hidden_size), (num_layers * num_directions, batch, hidden_size)
 
 class LSTMLastHidden(LSTMEncoder):
     def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1):
