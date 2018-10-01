@@ -19,31 +19,36 @@ class Seq2Seq(nn.Module):
 
     def encode(self, inputs):
         inputs = self._append_EOS(inputs)
-        (outputs, lengths), hiddens = self.encoder.forward(inputs)
+        (outputs, lengths), (hiddens, cells) = self.encoder.forward(inputs)
         if self.encoder.num_directions == 2:
-            s = hiddens.shape # (num_layers * num_directions, batch, hidden_size)
-            hiddens = hiddens.view(-1, 2, s[1], s[2]) # (num_layers, 2, batch, hidden_size)
-            hiddens = torch.cat([hiddens[:, i] for i in range(2)], dim=2) # (num_layers, batch, hidden_size*2)
-        return (outputs, lengths), hiddens
+            hiddens = self._concat_bi_direction(hiddens)
+            cells = self._concat_bi_direction(cells)
+        return (outputs, lengths), (hiddens, cells)
+
+    def _concat_bi_direction(self, hiddens):# (num_layers * num_directions, batch, hidden_size)
+        s = hiddens.shape # (num_layers * num_directions, batch, hidden_size)
+        hiddens = hiddens.view(-1, 2, s[1], s[2]) # (num_layers, 2, batch, hidden_size)
+        hiddens = torch.cat([hiddens[:, i] for i in range(2)], dim=2) # (num_layers, batch, hidden_size*2)
+        return hiddens
 
     def fit(self, inputs, targets, optimizer):
         self.train()
         # encoding
-        _, enc_hiddens = self.encode(inputs) # (num_layers, batch, dec_hidden_size)
+        _, (enc_hiddens, enc_cells) = self.encode(inputs) # (num_layers, batch, dec_hidden_size)
         # decoding
         BOS_targets = self._append_BOS(targets)
-        (decoded, lengths), _ = self.decoder.forward(BOS_targets, enc_hiddens) # (batch, max(dec_seq_lens), dec_hidden_size)
+        (decoded, lengths), _ = self.decoder.forward(BOS_targets, (enc_hiddens, enc_cells)) # (batch, max(dec_seq_lens), dec_hidden_size)
         decoded = self._flatten_and_unpad(decoded, lengths) # (n_tokens, dec_hidden_size)
         # predicting
         targets_EOS = self._append_EOS_flatten(targets)
         loss = self.out_mlp.fit(decoded, targets_EOS, optimizer)
         return loss
 
-    def generate(self, inputs, threshold=100):
+    def predict(self, inputs, threshold=100):
         self.eval()
         with torch.no_grad():
             # encoding
-            _, enc_hiddens = self.encode(inputs) # (num_layers * num_directions, batch, hidden_size)
+            _, (enc_hiddens, enc_cells) = self.encode(inputs) # (num_layers * num_directions, batch, hidden_size)
 
             generated = []
             n_batch = enc_hiddens.shape[1]
@@ -52,8 +57,9 @@ class Seq2Seq(nn.Module):
                 tgt_seq = []
                 current_token = self.tgt_BOS
                 hidden = enc_hiddens[:, i].unsqueeze(1) # computing batch by batch
+                cell = enc_cells[:, i].unsqueeze(1)
                 for _ in range(threshold):
-                    (decoded, _), hidden = self.decoder.forward(torch.LongTensor([[current_token]]), hidden)
+                    (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]), (hidden, cell))
                     # predicting token
                     out = self.out_mlp.predict(decoded.squeeze(1)).item()
                     if out == self.tgt_EOS: break
@@ -93,10 +99,10 @@ class AttnSeq2Seq(Seq2Seq):
     def fit(self, inputs, targets, optimizer):
         self.train()
         # encoding
-        (enc_outputs, enc_seq_lens), enc_hiddens = self.encode(inputs) # (batch, max(enc_seq_lens), dec_hidden_size), (num_layers, batch, dec_hidden_size)
+        (enc_outputs, enc_seq_lens), (enc_hiddens, enc_cells) = self.encode(inputs) # (batch, max(enc_seq_lens), dec_hidden_size), (num_layers, batch, dec_hidden_size)
         # decoding
         BOS_targets = self._append_BOS(targets)
-        (decoded, dec_seq_lens), _ = self.decoder.forward(BOS_targets, enc_hiddens) # (batch, max(dec_seq_lens), dec_hidden_size)
+        (decoded, dec_seq_lens), _ = self.decoder.forward(BOS_targets, (enc_hiddens, enc_cells)) # (batch, max(dec_seq_lens), dec_hidden_size)
         # attention
         weights = self.attention.forward(keys=enc_outputs, queries=decoded,
                                          keys_len=enc_seq_lens, queries_len=dec_seq_lens) # (batch, max(dec_seq_lens), max(enc_seq_lens))
@@ -109,11 +115,11 @@ class AttnSeq2Seq(Seq2Seq):
         loss = self.out_mlp.fit(decoded_attn, targets_EOS, optimizer)
         return loss
 
-    def generate(self, inputs, threshold=100, attention=False):
+    def predict(self, inputs, threshold=100, attention=False):
         self.eval()
         with torch.no_grad():
             # encoding
-            (enc_outputs, enc_seq_lens), enc_hiddens = self.encode(inputs) # (batch, max(enc_seq_lens), dec_hidden_size), (num_layers, batch, dec_hidden_size)
+            (enc_outputs, enc_seq_lens), (enc_hiddens, enc_cells) = self.encode(inputs) # (batch, max(enc_seq_lens), dec_hidden_size), (num_layers, batch, dec_hidden_size)
 
             generated = []
             n_batch = enc_hiddens.shape[1]
@@ -124,12 +130,13 @@ class AttnSeq2Seq(Seq2Seq):
                 current_token = self.tgt_BOS
                 enc_output = enc_outputs[i].unsqueeze(0) # (1, max(enc_seq_lens), dec_hidden_size)
                 hidden = enc_hiddens[:, i].unsqueeze(1) # (num_layers, 1, dec_hidden_size)
+                cell = enc_cells[:, i].unsqueeze(1) # (num_layers, 1, dec_hidden_size)
                 # decoding
                 for _ in range(threshold):
-                    (decoded, _), hidden = self.decoder.forward(torch.LongTensor([[current_token]]), hidden) # (1, 1, dec_hidden_size)
+                    (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]), (hidden, cell)) # (1, 1, dec_hidden_size)
                     weights = self.attention.forward(enc_output, decoded, [enc_seq_lens[i]]) # (1, 1, max(enc_seq_lens)))
                     if attention:
-                        attn_ws[i].append(weights)
+                        attn_ws[i].append(weights.squeeze()[:enc_seq_lens[i]])
                     # calculating attention
                     attn_vec = torch.bmm(weights, enc_output) # (1, 1, dec_hidden_size)
                     decoded_attn = torch.cat((decoded, attn_vec), dim=2)

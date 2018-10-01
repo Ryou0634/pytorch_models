@@ -34,7 +34,7 @@ class BoV(SeqEncoderBase):
 class LSTMEncoder(SeqEncoderBase):
     def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1):
         super().__init__(embed_size, vocab_size)
-        self.rnn = nn.LSTM(embed_size, hidden_size,
+        self.lstm = nn.LSTM(embed_size, hidden_size,
                         bidirectional=bidirectional, num_layers=num_layers)
 
         self.hidden_size = hidden_size
@@ -72,13 +72,12 @@ class LSTMEncoder(SeqEncoderBase):
         _, idxs = torch.sort(torch.tensor(original_idx))
         return tensor[idxs]
 
-    def forward(self, inputs, init_hiddens=None):
+    def forward(self, inputs, init_state=None):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
-        if init_hiddens is not None:
-            init_state = (init_hiddens[:, original_idx], torch.zeros(init_hiddens.shape, device=init_hiddens.device))
-            outputs, (hiddens, _) = self.rnn(packed_embeds, init_state)
+        if init_state is not None:
+            outputs, (hiddens, cells) = self.lstm(packed_embeds, init_state)
         else:
-            outputs, (hiddens, _) = self.rnn(packed_embeds)
+            outputs, (hiddens, cells) = self.lstm(packed_embeds)
         tensors, lengths = pad_packed_sequence(outputs, batch_first=True)
 
         # reorder_batch
@@ -86,7 +85,8 @@ class LSTMEncoder(SeqEncoderBase):
         lengths = lengths[idxs]
         tensors = tensors[idxs]
         hiddens = hiddens[:, idxs]
-        return (tensors, lengths), hiddens # (batch, seq_len, num_directions * hidden_size), (num_layers * num_directions, batch, hidden_size)
+        cells = cells[:, idxs]
+        return (tensors, lengths), (hiddens, cells) # (batch, seq_len, num_directions * hidden_size), (num_layers * num_directions, batch, hidden_size)
 
 class LSTMLastHidden(LSTMEncoder):
     def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1):
@@ -94,7 +94,7 @@ class LSTMLastHidden(LSTMEncoder):
 
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
-        _, (hiddens, _) = self.rnn(packed_embeds) # (num_layers * num_directions, batch, hidden_size)
+        _, (hiddens, _) = self.lstm(packed_embeds) # (num_layers * num_directions, batch, hidden_size)
         hiddens = hiddens.view(self.num_layers, self.num_directions, -1, self.embed_size)
         hidden = torch.cat([tensor for tensor in hiddens[-1]], dim=1) # only use hidden from the last layer and concat along the dim of num_direction
         hidden = self.reorder_batch(hidden, original_idx)
@@ -107,7 +107,7 @@ class LSTMMaxPool(LSTMEncoder):
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
 
-        outputs, _ = self.rnn(packed_embeds)
+        outputs, _ = self.lstm(packed_embeds) # (batch, seq_len, num_directions * hidden_size)
         tensors, lengths = pad_packed_sequence(outputs, batch_first=True)
         for tensor, length in zip(tensors, lengths):
             tensor[length:] = float('-inf')
