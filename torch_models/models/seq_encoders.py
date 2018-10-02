@@ -32,7 +32,7 @@ class BoV(SeqEncoderBase):
         return torch.stack(averaged)
 
 class LSTMEncoder(SeqEncoderBase):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1):
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, device='cpu'):
         super().__init__(embed_size, vocab_size)
         self.lstm = nn.LSTM(embed_size, hidden_size,
                         bidirectional=bidirectional, num_layers=num_layers)
@@ -41,6 +41,8 @@ class LSTMEncoder(SeqEncoderBase):
         self.num_layers = num_layers
         self.num_directions = 1+bidirectional
         self.output_size = embed_size*self.num_directions
+        self.device = torch.device(device)
+        self.to(device)
 
     def get_packed_embeds(self, seqs):
         # sorting
@@ -63,7 +65,7 @@ class LSTMEncoder(SeqEncoderBase):
         lengths = [len(seq) for seq in sorted_seqs]
         max_length = lengths[0]
         padded_seqs = [torch.cat((sorted_seqs[i],
-                                 self.embedding.padding_idx*torch.ones(max_length - lengths[i], dtype=torch.int64)))
+            self.embedding.padding_idx*torch.ones(max_length - lengths[i], dtype=torch.int64).to(self.device)))
                       for i in range(len(sorted_seqs))]
         padded_seqs = torch.stack(padded_seqs, dim=0)
         return padded_seqs, lengths
@@ -89,8 +91,8 @@ class LSTMEncoder(SeqEncoderBase):
         return (tensors, lengths), (hiddens, cells) # (batch, seq_len, num_directions * hidden_size), (num_layers * num_directions, batch, hidden_size)
 
 class LSTMLastHidden(LSTMEncoder):
-    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1):
-        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers)
+    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1, device='cpu'):
+        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers, device)
 
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
@@ -101,8 +103,8 @@ class LSTMLastHidden(LSTMEncoder):
         return hidden
 
 class LSTMMaxPool(LSTMEncoder):
-    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1):
-        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers)
+    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1, device='cpu'):
+        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers, device)
 
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)

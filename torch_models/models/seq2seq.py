@@ -4,18 +4,20 @@ import torch
 
 class Seq2Seq(nn.Module):
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False):
+                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, device='cpu'):
         super().__init__()
         self.encoder = LSTMEncoder(embed_size, hidden_size, src_vocab_size,
-                                   bidirectional=bidirectional, num_layers=num_layers)
+                                   bidirectional=bidirectional, num_layers=num_layers, device=device)
         self.dec_hidden_size = hidden_size*(1+bidirectional)
         self.decoder = LSTMEncoder(embed_size, self.dec_hidden_size, tgt_vocab_size,
-                                   bidirectional=False, num_layers=num_layers)
+                                   bidirectional=False, num_layers=num_layers, device=device)
         self.out_mlp = MLP(dims=[self.dec_hidden_size, tgt_vocab_size])
 
         self.src_EOS = src_EOS
         self.tgt_BOS = tgt_BOS
         self.tgt_EOS = tgt_EOS
+        self.device = torch.device(device)
+        self.to(self.device)
 
     def encode(self, inputs):
         inputs = self._append_EOS(inputs)
@@ -59,7 +61,7 @@ class Seq2Seq(nn.Module):
                 hidden = enc_hiddens[:, i].unsqueeze(1) # computing batch by batch
                 cell = enc_cells[:, i].unsqueeze(1)
                 for _ in range(threshold):
-                    (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]), (hidden, cell))
+                    (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]).to(self.device), (hidden, cell))
                     # predicting token
                     out = self.out_mlp.predict(decoded.squeeze(1)).item()
                     if out == self.tgt_EOS: break
@@ -69,15 +71,15 @@ class Seq2Seq(nn.Module):
         return generated
 
     def _append_EOS(self, inputs):
-        inputs_EOS = [torch.cat((inp, torch.tensor([self.src_EOS]))) for inp in inputs]
+        inputs_EOS = [torch.cat((inp, torch.tensor([self.src_EOS]).to(self.device))) for inp in inputs]
         return inputs_EOS
 
     def _append_BOS(self, targets):
-        BOS_targets = [torch.cat((torch.tensor([self.tgt_BOS]), target)) for target in targets]
+        BOS_targets = [torch.cat((torch.tensor([self.tgt_BOS]).to(self.device), target)) for target in targets]
         return BOS_targets
 
     def _append_EOS_flatten(self, targets):
-        EOS_targets = [torch.cat((target, torch.tensor([self.tgt_EOS]))) for target in targets]
+        EOS_targets = [torch.cat((target, torch.tensor([self.tgt_EOS]).to(self.device))) for target in targets]
         return torch.cat(EOS_targets)
 
     def _flatten_and_unpad(self, decoded, lengths):
@@ -90,11 +92,12 @@ from .attentions import DotAttn
 
 class AttnSeq2Seq(Seq2Seq):
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False):
+                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, device='cpu'):
         super().__init__(embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                         src_EOS, tgt_BOS, tgt_EOS, num_layers, bidirectional)
+                         src_EOS, tgt_BOS, tgt_EOS, num_layers, bidirectional, device)
         self.out_mlp = MLP(dims=[self.dec_hidden_size*2, tgt_vocab_size])
-        self.attention = DotAttn(scaled=True)
+        self.attention = DotAttn(scaled=True, device=device)
+        self.to(self.device)
 
     def fit(self, inputs, targets, optimizer):
         self.train()
@@ -133,7 +136,7 @@ class AttnSeq2Seq(Seq2Seq):
                 cell = enc_cells[:, i].unsqueeze(1) # (num_layers, 1, dec_hidden_size)
                 # decoding
                 for _ in range(threshold):
-                    (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]), (hidden, cell)) # (1, 1, dec_hidden_size)
+                    (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]).to(self.device), (hidden, cell)) # (1, 1, dec_hidden_size)
                     weights = self.attention.forward(enc_output, decoded, [enc_seq_lens[i]]) # (1, 1, max(enc_seq_lens)))
                     if attention:
                         attn_ws[i].append(weights.squeeze()[:enc_seq_lens[i]])
