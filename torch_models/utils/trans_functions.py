@@ -1,45 +1,46 @@
 import torch
 import numpy as np
 
-def get_device(show_log=True):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    if show_log:
-        print('===== Device =====')
-        print(device)
-    return device
-
 # trans_func for pytorch
 # Used in my_utils.DataLoader.
-def seq2label(inputs, targets):
-    device = get_device(show_log=False)
-    seqs = [torch.LongTensor(seq).to(device) for seq in inputs]
-    targets = torch.LongTensor(targets).to(device)
-    return seqs, targets
 
-def twoseq2label(inputs, targets):
-    device = get_device(show_log=False)
-    seq1s, seq2s = zip(*inputs)
-    seq1s = [torch.LongTensor(seq).to(device) for seq in seq1s]
-    seq2s = [torch.LongTensor(seq).to(device) for seq in seq2s]
-    targets = torch.LongTensor(targets).to(device)
-    return (seq1s, seq2s), targets
+class TransFunc():
+    def __init__(self, device='cpu'):
+        self.device = torch.device(device)
 
-def seq2seq(inputs, targets):
-    device = get_device(show_log=False)
-    src_seq = [torch.LongTensor(seq).to(device) for seq in inputs]
-    tgt_seq = [torch.LongTensor(seq).to(device) for seq in targets]
-    return src_seq, tgt_seq
+    def __call__(self, inputs, targets):
+        return
 
-def twoseq2seq(inputs, targets):
-    device = get_device(show_log=False)
-    seq1s, seq2s = zip(*inputs)
-    seq1s = [torch.LongTensor(seq).to(device) for seq in seq1s]
-    seq2s = [torch.LongTensor(seq).to(device) for seq in seq2s]
-    targets = [torch.LongTensor(seq).to(device) for seq in targets]
-    return (seq1s, seq2s), targets
+class seq2label(TransFunc):
+    def __call__(self, inputs, targets):
+        seqs = [torch.LongTensor(seq).to(self.device) for seq in inputs]
+        targets = torch.LongTensor(targets).to(self.device)
+        return seqs, targets
 
-def torch_stack(inputs, targets):
-    device = get_device(show_log=False)
-    inputs = torch.from_numpy(np.stack(inputs)).to(device)
-    targets = torch.LongTensor(targets).to(device)
-    return inputs, targets
+class twoseq2label(TransFunc):
+    def __call__(self, inputs, targets):
+        seq1s, seq2s = zip(*inputs)
+        seq1s = [torch.LongTensor(seq).to(self.device) for seq in seq1s]
+        seq2s = [torch.LongTensor(seq).to(self.device) for seq in seq2s]
+        targets = torch.LongTensor(targets).to(self.device)
+        return (seq1s, seq2s), targets
+
+class seq2seq(TransFunc):
+    def __call__(self, inputs, targets):
+        src_seq = [torch.LongTensor(seq).to(self.device) for seq in inputs]
+        tgt_seq = [torch.LongTensor(seq).to(self.device) for seq in targets]
+        return src_seq, tgt_seq
+
+class twoseq2seq(TransFunc):
+    def __call__(self, inputs, targets):
+        seq1s, seq2s = zip(*inputs)
+        seq1s = [torch.LongTensor(seq).to(self.device) for seq in seq1s]
+        seq2s = [torch.LongTensor(seq).to(self.device) for seq in seq2s]
+        targets = [torch.LongTensor(seq).to(self.device) for seq in targets]
+        return (seq1s, seq2s), targets
+
+class torch_stack(TransFunc):
+    def __call__(self, inputs, targets):
+        inputs = torch.from_numpy(np.stack(inputs)).to(self.device)
+        targets = torch.LongTensor(targets).to(self.device)
+        return inputs, targets

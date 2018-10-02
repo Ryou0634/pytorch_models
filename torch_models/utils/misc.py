@@ -1,5 +1,12 @@
 import torch
 
+def get_device(show_log=True):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if show_log:
+        print('===== Device =====')
+        print(device)
+    return device
+
 def get_closest_word_vecotors(word, embedding, vocab_dict, topk=10):
     '''
     Get a list of the top-k closest word vecotors.
