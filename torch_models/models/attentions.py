@@ -4,11 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class DotAttn():
-    def __init__(self, scaled=False, device='cpu'):
+    def __init__(self, scaled=False):
         self.scaled = scaled
-        self.device = torch.device(device)
 
-    def forward(self, keys, queries, keys_len=None, queries_len=None):
+    def __call__(self, keys, queries, keys_len=None, queries_len=None):
         '''
         Parameters
         -----------
@@ -35,16 +34,14 @@ class DotAttn():
             score[q_len:] = torch.tensor(float('-inf'))
             score[:, k_len:] = torch.tensor(float('-inf'))
         weights = F.softmax(scores, dim=2)
-        weights = torch.where(torch.isnan(weights), torch.tensor(0., device=self.device), weights) # to avoid nan
+        weights = torch.where(torch.isnan(weights), weights.new_tensor(0.), weights) # to avoid nan
         return weights
 
 class BiLinearAttn(nn.Module):
-    def __init__(self, dim1, dim2, device='cpu'):
+    def __init__(self, dim1, dim2):
         self.linear = nn.Linear(dim1, dim2)
-        self.device = torch.device(device)
-        self.to(self.device)
 
-    def forward(self, keys, queries):
+    def __call__(self, keys, queries):
         values = torch.where((keys == float('-inf')), torch.tensor(0.), keys)
         queries = self.linear(queries)
         scores = torch.bmm(queries, keys.permute(0, 2, 1)) # (batch * 1 * dim) @ (batch * dim * n_keys)

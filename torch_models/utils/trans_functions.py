@@ -5,8 +5,8 @@ import numpy as np
 # Used in my_utils.DataLoader.
 
 class TransFunc():
-    def __init__(self, device='cpu'):
-        self.device = torch.device(device)
+    def __init__(self, device):
+        self.device = device
 
     def __call__(self, inputs, targets):
         return
