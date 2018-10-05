@@ -46,7 +46,7 @@ class Seq2Seq(nn.Module):
         loss = self.out_mlp.fit(decoded, targets_EOS, optimizer)
         return loss
 
-    def predict(self, inputs, threshold=100):
+    def predict(self, inputs, max_len=100):
         self.eval()
         with torch.no_grad():
             # encoding
@@ -60,7 +60,7 @@ class Seq2Seq(nn.Module):
                 current_token = self.tgt_BOS
                 hidden = enc_hiddens[:, i].unsqueeze(1) # computing batch by batch
                 cell = enc_cells[:, i].unsqueeze(1)
-                for _ in range(threshold):
+                for _ in range(max_len):
                     (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]).to(self.device), (hidden, cell))
                     # predicting token
                     out = self.out_mlp.predict(decoded.squeeze(1)).item()
@@ -118,7 +118,7 @@ class AttnSeq2Seq(Seq2Seq):
         loss = self.out_mlp.fit(decoded_attn, targets_EOS, optimizer)
         return loss
 
-    def predict(self, inputs, threshold=100, attention=False):
+    def predict(self, inputs, max_len=100, attention=False):
         self.eval()
         with torch.no_grad():
             # encoding
@@ -135,7 +135,7 @@ class AttnSeq2Seq(Seq2Seq):
                 hidden = enc_hiddens[:, i].unsqueeze(1) # (num_layers, 1, dec_hidden_size)
                 cell = enc_cells[:, i].unsqueeze(1) # (num_layers, 1, dec_hidden_size)
                 # decoding
-                for _ in range(threshold):
+                for _ in range(max_len):
                     (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]).to(self.device), (hidden, cell)) # (1, 1, dec_hidden_size)
                     weights = self.attention.forward(enc_output, decoded, [enc_seq_lens[i]]) # (1, 1, max(enc_seq_lens)))
                     if attention:
