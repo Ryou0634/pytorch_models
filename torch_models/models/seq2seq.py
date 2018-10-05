@@ -48,27 +48,33 @@ class Seq2Seq(nn.Module):
 
     def predict(self, inputs, max_len=100):
         self.eval()
+        generated = []
         with torch.no_grad():
             # encoding
             _, (enc_hiddens, enc_cells) = self.encode(inputs) # (num_layers * num_directions, batch, hidden_size)
+            batchsize = enc_hiddens.shape[1]
+            input_tokens = torch.LongTensor([self.tgt_BOS for _ in range(batchsize)]).view(-1, 1)
+            end_flags = torch.zeros(batchsize)
+            for i in range(max_len):
+                (decoded, lengths), _ = self.decoder.forward(input_tokens, (enc_hiddens, enc_cells))
+                decoded = self._flatten_and_unpad(decoded, lengths) # (n_tokens, dec_hidden_size)
+                output_tokens = self.out_mlp.predict(decoded)
+                generated.append(output_tokens)
+                end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
+                if end_flags.sum() == batchsize: break
+                input_tokens = output_tokens.view(-1, 1)
+        generated = torch.stack(generated, dim=1).tolist()
+        return self._remove_EOS(generated)
 
-            generated = []
-            n_batch = enc_hiddens.shape[1]
-            # decoding
-            for i in range(n_batch):
-                tgt_seq = []
-                current_token = self.tgt_BOS
-                hidden = enc_hiddens[:, i].unsqueeze(1) # computing batch by batch
-                cell = enc_cells[:, i].unsqueeze(1)
-                for _ in range(max_len):
-                    (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]).to(self.device), (hidden, cell))
-                    # predicting token
-                    out = self.out_mlp.predict(decoded.squeeze(1)).item()
-                    if out == self.tgt_EOS: break
-                    tgt_seq.append(out)
-                    current_token = out
-                generated.append(tgt_seq)
-        return generated
+    def _remove_EOS(self, generated):
+        outputs = []
+        for seq in generated:
+            if self.tgt_EOS in seq:
+                EOS_idx = seq.index(self.tgt_EOS)
+                outputs.append(seq[:EOS_idx])
+            else:
+                outputs.append(seq)
+        return outputs
 
     def _append_EOS(self, inputs):
         inputs_EOS = [torch.cat((inp, torch.tensor([self.src_EOS]).to(self.device))) for inp in inputs]
@@ -118,38 +124,26 @@ class AttnSeq2Seq(Seq2Seq):
         loss = self.out_mlp.fit(decoded_attn, targets_EOS, optimizer)
         return loss
 
-    def predict(self, inputs, max_len=100, attention=False):
+    def predict(self, inputs, max_len=100):
         self.eval()
+        generated = []
         with torch.no_grad():
             # encoding
-            (enc_outputs, enc_seq_lens), (enc_hiddens, enc_cells) = self.encode(inputs) # (batch, max(enc_seq_lens), dec_hidden_size), (num_layers, batch, dec_hidden_size)
-
-            generated = []
-            n_batch = enc_hiddens.shape[1]
-            if attention:
-                attn_ws = [[] for _ in range(n_batch)]
-            for i in range(n_batch):
-                tgt_seq = []
-                current_token = self.tgt_BOS
-                enc_output = enc_outputs[i].unsqueeze(0) # (1, max(enc_seq_lens), dec_hidden_size)
-                hidden = enc_hiddens[:, i].unsqueeze(1) # (num_layers, 1, dec_hidden_size)
-                cell = enc_cells[:, i].unsqueeze(1) # (num_layers, 1, dec_hidden_size)
-                # decoding
-                for _ in range(max_len):
-                    (decoded, _), (hidden, cell) = self.decoder.forward(torch.LongTensor([[current_token]]).to(self.device), (hidden, cell)) # (1, 1, dec_hidden_size)
-                    weights = self.attention.forward(enc_output, decoded, [enc_seq_lens[i]]) # (1, 1, max(enc_seq_lens)))
-                    if attention:
-                        attn_ws[i].append(weights.squeeze()[:enc_seq_lens[i]])
-                    # calculating attention
-                    attn_vec = torch.bmm(weights, enc_output) # (1, 1, dec_hidden_size)
-                    decoded_attn = torch.cat((decoded, attn_vec), dim=2)
-                    # predicting token
-                    out = self.out_mlp.predict(decoded_attn.squeeze(1)).item()
-                    if out == self.tgt_EOS: break
-                    tgt_seq.append(out)
-                    current_token = out
-                generated.append(tgt_seq)
-            if attention:
-                return generated, attn_ws
-            else:
-                return generated
+            (enc_outputs, enc_seq_lens), (enc_hiddens, enc_cells) = self.encode(inputs) # (num_layers * num_directions, batch, hidden_size)
+            batchsize = enc_hiddens.shape[1]
+            input_tokens = torch.LongTensor([self.tgt_BOS for _ in range(batchsize)]).view(-1, 1)
+            end_flags = torch.zeros(batchsize)
+            for i in range(max_len):
+                (decoded, dec_seq_lens), _ = self.decoder.forward(input_tokens, (enc_hiddens, enc_cells))
+                weights = self.attention.forward(keys=enc_outputs, queries=decoded,
+                                                 keys_len=enc_seq_lens, queries_len=dec_seq_lens) # (batch, max(dec_seq_lens), max(enc_seq_lens))
+                attn_vecs = torch.bmm(weights, enc_outputs) # (batch, max(dec_seq_lens), dec_hidden_size)
+                decoded_attn = torch.cat((decoded, attn_vecs), dim=2)
+                decoded_attn = self._flatten_and_unpad(decoded_attn, dec_seq_lens) # (n_tokens, dec_hidden_size*2)
+                output_tokens = self.out_mlp.predict(decoded_attn)
+                generated.append(output_tokens)
+                end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
+                if end_flags.sum() == batchsize: break
+                input_tokens = output_tokens.view(-1, 1)
+        generated = torch.stack(generated, dim=1).tolist()
+        return self._remove_EOS(generated)
