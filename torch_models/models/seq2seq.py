@@ -38,6 +38,7 @@ class Seq2Seq(nn.Module):
 
     def fit(self, inputs, targets, optimizer):
         self.train()
+        self.zero_grad()
         # encoding
         (enc_outputs, enc_seq_lens), (enc_hiddens, enc_cells) = self.encode(inputs) # (num_layers, batch, dec_hidden_size)
         # decoding
