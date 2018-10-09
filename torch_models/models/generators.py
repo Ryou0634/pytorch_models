@@ -3,9 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from .seq_encoders import LSTMEncoder
+from .seq_encoders import RNNEncoder
 
-class Generator(LSTMEncoder):
+class Generator(RNNEncoder):
     def __init__(self, vocab_dict, embed_size):
         self.vocab_dict = vocab_dict
         super().__init__(embed_size=embed_size, vocab_size=len(vocab_dict),

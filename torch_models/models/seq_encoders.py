@@ -31,12 +31,20 @@ class BoV(SeqEncoderBase):
         averaged = [torch.mean(embed_seqs[i], dim=0) for i in range(len(embed_seqs))]
         return torch.stack(averaged)
 
-class LSTMEncoder(SeqEncoderBase):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1):
+class RNNEncoder(SeqEncoderBase):
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, rnn='rnn'):
         super().__init__(embed_size, vocab_size)
-        self.lstm = nn.LSTM(embed_size, hidden_size,
-                        bidirectional=bidirectional, num_layers=num_layers)
+        if rnn is 'rnn':
+            unit = nn.RNN
+        elif rnn is 'lstm':
+            unit = nn.LSTM
+        elif rnn is 'gru':
+            unit = nn.GRU
+        else:
+            raise Error("rnn must be ['rnn', 'lstm', 'gru']")
 
+        self.rnn = unit(embed_size, hidden_size,
+                        bidirectional=bidirectional, num_layers=num_layers)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_directions = 1+bidirectional
@@ -69,49 +77,59 @@ class LSTMEncoder(SeqEncoderBase):
         padded_seqs = torch.stack(padded_seqs, dim=0)
         return padded_seqs, lengths
 
-    def reorder_batch(self, tensor, original_idx):
+    def _reorder_batch(self, tensor, original_idx):
         _, idxs = torch.sort(torch.tensor(original_idx))
         return tensor[idxs]
+
+    def _reorder_hiddens(self, hiddens, idxs):
+        if isinstance(self.rnn, nn.LSTM):
+            hiddens, cells = hiddens
+            hiddens = hiddens[:, idxs]
+            cells = cells[:, idxs]
+            return (hiddens, cells)
+        else:
+            return hiddens[:, idxs]
 
     def forward(self, inputs, init_state=None):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
         if init_state is not None:
-            outputs, (hiddens, cells) = self.lstm(packed_embeds, init_state)
+            outputs, hiddens = self.rnn(packed_embeds, init_state)
         else:
-            outputs, (hiddens, cells) = self.lstm(packed_embeds)
+            outputs, hiddens = self.rnn(packed_embeds)
         tensors, lengths = pad_packed_sequence(outputs, batch_first=True)
 
-        # reorder_batch
+        # _reorder_batch
         _, idxs = torch.sort(torch.tensor(original_idx))
         lengths = lengths[idxs]
         tensors = tensors[idxs]
-        hiddens = hiddens[:, idxs]
-        cells = cells[:, idxs]
-        return (tensors, lengths), (hiddens, cells) # (batch, seq_len, num_directions * hidden_size), (num_layers * num_directions, batch, hidden_size)
+        hiddens = self._reorder_hiddens(hiddens, idxs)
+        return (tensors, lengths), hiddens # (batch, seq_len, num_directions * hidden_size), (num_layers * num_directions, batch, hidden_size)
 
-class LSTMLastHidden(LSTMEncoder):
-    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1):
-        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers)
+class RNNLastHidden(RNNEncoder):
+    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1, rnn='lstm'):
+        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers, rnn)
 
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
-        _, (hiddens, _) = self.lstm(packed_embeds) # (num_layers * num_directions, batch, hidden_size)
+        _, hiddens = self.rnn(packed_embeds) # (num_layers * num_directions, batch, hidden_size)
+        if isinstance(self.rnn, nn.LSTM):
+            hiddens = hiddens[0]
         hiddens = hiddens.view(self.num_layers, self.num_directions, -1, self.embed_size)
         hidden = torch.cat([tensor for tensor in hiddens[-1]], dim=1) # only use hidden from the last layer and concat along the dim of num_direction
-        hidden = self.reorder_batch(hidden, original_idx)
+        hidden = self._reorder_batch(hidden, original_idx)
         return hidden
 
-class LSTMMaxPool(LSTMEncoder):
-    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1):
-        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers)
+class RNNMaxPool(RNNEncoder):
+    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1, rnn='lstm'):
+        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers, rnn)
 
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
 
-        outputs, _ = self.lstm(packed_embeds) # (batch, seq_len, num_directions * hidden_size)
+        outputs, _ = self.rnn(packed_embeds) # (batch, seq_len, num_directions * hidden_size)
         tensors, lengths = pad_packed_sequence(outputs, batch_first=True)
         for tensor, length in zip(tensors, lengths):
             tensor[length:] = float('-inf')
         pooled, _ = torch.max(tensors, dim=1)
-        pooled = self.reorder_batch(pooled, original_idx)
+        pooled = self._reorder_batch(pooled, original_idx)
         return pooled

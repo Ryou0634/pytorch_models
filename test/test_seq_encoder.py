@@ -10,7 +10,7 @@ device = get_device()
 from my_utils import Trainer, EvaluatorC
 from torch.optim import Adam
 
-from torch_models.models import BoV, LSTMLastHidden, LSTMMaxPool, SingleClassifier
+from torch_models.models import BoV, RNNLastHidden, RNNMaxPool, SingleClassifier
 def test_BoV():
     encoder = BoV(embed_size=50, vocab_size=10).to(device)
     model = SingleClassifier(encoder=encoder, output_size=2, hidden_size=None,
@@ -27,7 +27,7 @@ def test_BoV():
 
 
 def test_LSTM():
-    for clas in [LSTMLastHidden, LSTMMaxPool]:
+    for clas in [RNNLastHidden, RNNMaxPool]:
         for bidirectional in [False, True]:
             for num_layers in [1, 2]:
                 encoder = clas(embed_size=50, vocab_size=10, bidirectional=bidirectional, num_layers=num_layers).to(device)

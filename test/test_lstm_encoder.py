@@ -1,7 +1,7 @@
 import torch
-from torch_models.models import LSTMEncoder
+from torch_models.models import RNNEncoder
 
-model = LSTMEncoder(embed_size=10, hidden_size=10, vocab_size=1)
+model = RNNEncoder(embed_size=10, hidden_size=10, vocab_size=1)
 
 seqs = [torch.LongTensor([0, 0, 0, 0]),
         torch.LongTensor([0, 0, 0, 0, 0]),
