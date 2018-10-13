@@ -20,14 +20,12 @@ class ClassifierBase(nn.Module):
         If True, the parameters in encoder will not be updated during training.
     '''
     def __init__(self, encoder, encoded_size, output_size, hidden_size,
-                 activation, dropout, freeze_encoder, device):
+                 activation, dropout, freeze_encoder):
         super().__init__()
         self.encoder = encoder
         self.mlp = MLP(dims=self._get_dims(encoded_size, output_size, hidden_size),
                        activation=activation, dropout=dropout)
         self.freeze_encoder = freeze_encoder
-        self.device = torch.device(device)
-        self.to(device)
 
     def _get_dims(self, encoded_size, output_size, hidden_size):
         if isinstance(hidden_size, int):
@@ -52,12 +50,14 @@ class ClassifierBase(nn.Module):
         return output
 
     def fit(self, inputs, labels, optimizer):
+        self.train()
         self.zero_grad()
         encoded = self._encode(inputs)
         loss_item = self.mlp.fit(encoded, labels, optimizer)
         return loss_item
 
     def predict(self, inputs):
+        self.eval()
         with torch.no_grad():
             encoded = self._encode(inputs)
             idx = self.mlp.predict(encoded)

@@ -3,9 +3,11 @@ from torch_models.utils import seq2label, get_device
 
 train = seq_10()
 test = seq_10(500)
-train_loader = DataLoader(train, batch_size=16, trans_func=seq2label, shuffle=True)
-test_loader = DataLoader(test, batch_size=64, trans_func=seq2label)
 device = get_device()
+trans_func = seq2label(device)
+train_loader = DataLoader(train, batch_size=16, trans_func=trans_func, shuffle=True)
+test_loader = DataLoader(test, batch_size=64, trans_func=trans_func)
+
 
 from my_utils import Trainer, EvaluatorC
 from torch.optim import Adam
@@ -22,15 +24,15 @@ def test_BoV():
     trainer = Trainer(model, train_loader)
     trainer.train(optimizer, max_epoch=1,
                   evaluator=evaluator, score_monitor=None, show_log=False, hook_func=None)
-    assert True == (evaluator.evaluate() > 0.9)
-
+    assert True == (evaluator.evaluate() > 0.8)
 
 
 def test_LSTM():
-    for clas in [RNNLastHidden, RNNMaxPool]:
+    for enc in [RNNLastHidden, RNNMaxPool]:
         for bidirectional in [False, True]:
             for num_layers in [1, 2]:
-                encoder = clas(embed_size=50, vocab_size=10, bidirectional=bidirectional, num_layers=num_layers).to(device)
+                encoder = enc(embed_size=10, hidden_size=15, vocab_size=10, bidirectional=bidirectional,
+                              num_layers=num_layers, rnn='lstm').to(device)
                 model = SingleClassifier(encoder=encoder, output_size=2, hidden_size=None,
                                          activation='Tanh', dropout=0, freeze_encoder=False).to(device)
                 optimizer = Adam(model.parameters())
@@ -39,4 +41,4 @@ def test_LSTM():
                 trainer = Trainer(model, train_loader)
                 trainer.train(optimizer, max_epoch=1,
                               evaluator=evaluator, score_monitor=None, show_log=False, hook_func=None)
-                assert True == (evaluator.evaluate() > 0.9)
+                assert True == (evaluator.evaluate() > 0.85)

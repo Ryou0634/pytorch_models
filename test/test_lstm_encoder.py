@@ -31,7 +31,7 @@ def test_pad_seqs():
 def test_reorder_batch():
     tensor = torch.eye(3, dtype=torch.int64)
     original_idx = [1, 2, 0]
-    reoredered = model.reorder_batch(tensor, original_idx)
+    reoredered = model._reorder_batch(tensor, original_idx)
     expected = (torch.LongTensor([0, 0, 1]),
                 torch.LongTensor([1, 0, 0]),
                 torch.LongTensor([0, 1, 0]))

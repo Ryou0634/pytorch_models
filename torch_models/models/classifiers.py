@@ -7,10 +7,10 @@ class SingleClassifier(ClassifierBase):
     (e.g. sentiment analysis, document classification, image classification)
     '''
     def __init__(self, encoder, output_size, hidden_size=None,
-                 activation='Tanh', dropout=0, freeze_encoder=False, device='cpu'):
+                 activation='Tanh', dropout=0, freeze_encoder=False):
         encoded_size = encoder.output_size
         super().__init__(encoder, encoded_size, output_size, hidden_size,
-                         activation, dropout, freeze_encoder, device)
+                         activation, dropout, freeze_encoder)
 
 class DoubleClassifier(ClassifierBase):
     '''
@@ -18,10 +18,10 @@ class DoubleClassifier(ClassifierBase):
     (e.g. natural language inferece, discoure relation recognition)
     '''
     def __init__(self, encoder, output_size, hidden_size=None,
-                 activation='Tanh', dropout=0, freeze_encoder=False, device='cpu'):
+                 activation='Tanh', dropout=0, freeze_encoder=False):
         encoded_size = encoder.output_size*2
         super().__init__(encoder, encoded_size, output_size, hidden_size,
-                         activation, dropout, freeze_encoder, device)
+                         activation, dropout, freeze_encoder)
 
     def _encode(self, inputs):
         seq1s, seq2s = inputs

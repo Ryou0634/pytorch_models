@@ -2,11 +2,13 @@ import torch
 from torch_models.models import Seq2Seq
 
 model = Seq2Seq(embed_size=1, hidden_size=5, src_vocab_size=2, tgt_vocab_size=3,
-                src_EOS=0, tgt_BOS=0, tgt_EOS=2, num_layers=1, bidirectional=False)
+                src_EOS=0, tgt_BOS=0, tgt_EOS=2, num_layers=1, bidirectional=False,
+                rnn='lstm')
 
 def test_encode():
     inputs = [torch.LongTensor([1, 1]), torch.LongTensor([1]), torch.LongTensor([1, 1])]
     (outputs, lengths), hiddens = model.encode(inputs)
+    hiddens = hiddens[0]
 
     assert (outputs[0] == outputs[2]).all()
     assert (hiddens[:, 0] == hiddens[:, 2]).all()

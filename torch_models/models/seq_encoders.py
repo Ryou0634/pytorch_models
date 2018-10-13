@@ -35,21 +35,20 @@ class RNNEncoder(SeqEncoderBase):
     def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, rnn='rnn'):
         super().__init__(embed_size, vocab_size)
         if rnn is 'rnn':
-            unit = nn.RNN
+            rnn_unit = nn.RNN
         elif rnn is 'lstm':
-            unit = nn.LSTM
+            rnn_unit = nn.LSTM
         elif rnn is 'gru':
-            unit = nn.GRU
+            rnn_unit = nn.GRU
         else:
             raise Error("rnn must be ['rnn', 'lstm', 'gru']")
 
-        self.rnn = unit(embed_size, hidden_size,
+        self.rnn = rnn_unit(embed_size, hidden_size,
                         bidirectional=bidirectional, num_layers=num_layers)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_directions = 1+bidirectional
-        self.output_size = embed_size*self.num_directions
-
+        self.output_size = hidden_size*self.num_directions
 
     def get_packed_embeds(self, seqs):
         # sorting
@@ -106,22 +105,22 @@ class RNNEncoder(SeqEncoderBase):
         return (tensors, lengths), hiddens # (batch, seq_len, num_directions * hidden_size), (num_layers * num_directions, batch, hidden_size)
 
 class RNNLastHidden(RNNEncoder):
-    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1, rnn='lstm'):
-        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers, rnn)
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, rnn='lstm'):
+        super().__init__(embed_size, hidden_size, vocab_size, bidirectional, num_layers, rnn)
 
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
         _, hiddens = self.rnn(packed_embeds) # (num_layers * num_directions, batch, hidden_size)
         if isinstance(self.rnn, nn.LSTM):
             hiddens = hiddens[0]
-        hiddens = hiddens.view(self.num_layers, self.num_directions, -1, self.embed_size)
+        hiddens = hiddens.view(self.num_layers, self.num_directions, -1, self.hidden_size)
         hidden = torch.cat([tensor for tensor in hiddens[-1]], dim=1) # only use hidden from the last layer and concat along the dim of num_direction
         hidden = self._reorder_batch(hidden, original_idx)
         return hidden
 
 class RNNMaxPool(RNNEncoder):
-    def __init__(self, embed_size, vocab_size, bidirectional=False, num_layers=1, rnn='lstm'):
-        super().__init__(embed_size, embed_size, vocab_size, bidirectional, num_layers, rnn)
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, rnn='lstm'):
+        super().__init__(embed_size, hidden_size, vocab_size, bidirectional, num_layers, rnn)
 
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
