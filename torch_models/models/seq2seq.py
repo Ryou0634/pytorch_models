@@ -10,6 +10,19 @@ class Seq2SeqBase(nn.Module):
         self.tgt_BOS = tgt_BOS
         self.tgt_EOS = tgt_EOS
 
+    def fit(self, inputs, targets, optimizer):
+        self.train()
+        self.zero_grad()
+        # encoding
+        encoded = self.encode(inputs) # (num_layers, batch, dec_hidden_size)
+        # decoding
+        BOS_targets = self._append_BOS(targets)
+        decoded = self.decode(BOS_targets, encoded)
+        # predicting
+        targets_EOS = self._append_EOS_flatten(targets)
+        loss = self.generator.fit(decoded['outputs'], targets_EOS, optimizer)
+        return loss
+
     def _remove_EOS(self, generated):
         outputs = []
         for seq in generated:
@@ -52,7 +65,7 @@ class Seq2Seq(Seq2SeqBase):
 
     def encode(self, inputs):
         inputs_EOS = self._append_EOS(inputs)
-        (outputs, lengths), hiddens = self.encoder(inputs_EOS)
+        (enc_outputs, lengths), hiddens = self.encoder(inputs_EOS)
         if self.encoder.num_directions == 2:
             if isinstance(self.encoder.rnn, nn.LSTM):
                 hiddens, cells = hiddens
@@ -61,7 +74,7 @@ class Seq2Seq(Seq2SeqBase):
                 hiddens = (hiddens, cells)
             else:
                 hiddens = self._concat_bi_direction(hiddens)
-        return {'outputs': outputs,
+        return {'outputs': enc_outputs,
                 'lengths': lengths,
                 'hiddens': hiddens}
 
@@ -73,22 +86,10 @@ class Seq2Seq(Seq2SeqBase):
 
     def decode(self, inputs, encoded):
         enc_hiddens = encoded['hiddens']
-        (decoded, lengths), hidden = self.decoder(inputs, enc_hiddens) # (batch, max(dec_seq_lens), dec_hidden_size)
-        decoded = self._flatten_and_unpad(decoded, lengths) # (n_tokens, dec_hidden_size)
-        return decoded, hidden
-
-    def fit(self, inputs, targets, optimizer):
-        self.train()
-        self.zero_grad()
-        # encoding
-        encoded = self.encode(inputs) # (num_layers, batch, dec_hidden_size)
-        # decoding
-        BOS_targets = self._append_BOS(targets)
-        decoded, _ = self.decode(BOS_targets, encoded)
-        # predicting
-        targets_EOS = self._append_EOS_flatten(targets)
-        loss = self.generator.fit(decoded, targets_EOS, optimizer)
-        return loss
+        (decoded, lengths), hiddens = self.decoder(inputs, enc_hiddens) # (batch, max(dec_seq_lens), dec_hidden_size)
+        dec_outputs = self._flatten_and_unpad(decoded, lengths) # (n_tokens, dec_hidden_size)
+        return {'outputs': dec_outputs,
+                'hiddens': hiddens}
 
     def predict(self, inputs, max_len=100):
         self.eval()
@@ -100,13 +101,13 @@ class Seq2Seq(Seq2SeqBase):
             input_tokens = inputs[0].new_tensor([self.tgt_BOS for _ in range(batchsize)]).view(-1, 1)
             end_flags = inputs[0].new_zeros(batchsize)
             for i in range(max_len):
-                decoded, hiddens  = self.decode(input_tokens, encoded) # (n_tokens, dec_hidden_size)
-                output_tokens = self.generator.predict(decoded)
+                decoded  = self.decode(input_tokens, encoded) # (n_tokens, dec_hidden_size)
+                output_tokens = self.generator.predict(decoded['outputs'])
                 generated.append(output_tokens)
                 end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
                 if end_flags.sum() == batchsize: break
                 input_tokens = output_tokens.view(-1, 1)
-                encoded['hiddens'] = hiddens
+                encoded['hiddens'] = decoded['hiddens']
         generated = torch.stack(generated, dim=1).tolist()
         return self._remove_EOS(generated)
 
@@ -136,4 +137,5 @@ class AttnSeq2Seq(Seq2Seq):
         # decoded + attention
         decoded_attn = F.tanh(self.attn_hidden(torch.cat((decoded, attn_vecs), dim=2)))
         decoded_attn = self._flatten_and_unpad(decoded_attn, dec_seq_lens) # (n_tokens, dec_hidden_size*2)
-        return decoded_attn, hiddens
+        return {'outputs': decoded_attn,
+                'hiddens': hiddens}

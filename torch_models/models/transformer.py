@@ -172,40 +172,29 @@ class Transformer(Seq2SeqBase):
 
     def encode(self, inputs):
         inputs_EOS = self._append_EOS(inputs)
-        encoded, enc_seq_lens = self.encoder(inputs_EOS)
-        return encoded, enc_seq_lens
+        enc_outputs, enc_seq_lens = self.encoder(inputs_EOS)
+        return {'outputs': enc_outputs,
+                'length': enc_seq_lens}
 
-    def decode(self, inputs, encoded, enc_seq_lens):
-        decoded, dec_seq_lens = self.decoder(inputs, encoded, enc_seq_lens)
-        decoded = self._flatten_and_unpad(decoded, dec_seq_lens)
-        return decoded
-
-    def fit(self, inputs, targets, optimizer):
-        self.train()
-        self.zero_grad()
-
-        # encoding
-        encoded, enc_seq_lens = self.encode(inputs)
-        # decoding
-        BOS_targets = self._append_BOS(targets)
-        decoded = self.decode(BOS_targets, encoded, enc_seq_lens)
-        # fit
-        targets_EOS = self._append_EOS_flatten(targets)
-        loss = self.generator.fit(decoded, targets_EOS, optimizer)
-        return loss
+    def decode(self, inputs, encoded):
+        enc_outputs = encoded['outputs']
+        enc_seq_lens = encoded['length']
+        decoded, dec_seq_lens = self.decoder(inputs, enc_outputs, enc_seq_lens)
+        dec_outputs = self._flatten_and_unpad(decoded, dec_seq_lens)
+        return {'outputs': dec_outputs}
 
     def predict(self, inputs, max_len=100):
         self.eval()
         generated = []
         with torch.no_grad():
             # encoding
-            encoded, enc_seq_lens = self.encode(inputs)
-            batchsize = len(enc_seq_lens)
+            encoded = self.encode(inputs)
+            batchsize = len(inputs)
             input_tokens = inputs[0].new_tensor([self.tgt_BOS for _ in range(batchsize)]).view(-1, 1)
             end_flags = inputs[0].new_zeros(batchsize)
             for i in range(max_len):
-                decoded = self.decode(input_tokens, encoded, enc_seq_lens) # (n_tokens, dec_hidden_size)
-                output_tokens = self.generator.predict(decoded) # (batchsize*seq_len)
+                decoded = self.decode(input_tokens, encoded) # (n_tokens, dec_hidden_size)
+                output_tokens = self.generator.predict(decoded['outputs']) # (batchsize*seq_len)
                 output_tokens = output_tokens.view(batchsize, -1)[:, -1] #(batchsize, seq_len)
                 generated.append(output_tokens) # append the latest new tokens
                 end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
