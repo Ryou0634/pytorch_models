@@ -3,23 +3,54 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class Seq2Seq(nn.Module):
+class Seq2SeqBase(nn.Module):
+    def __init__(self, src_EOS, tgt_BOS, tgt_EOS):
+        super().__init__()
+        self.src_EOS = src_EOS
+        self.tgt_BOS = tgt_BOS
+        self.tgt_EOS = tgt_EOS
+
+    def _remove_EOS(self, generated):
+        outputs = []
+        for seq in generated:
+            if self.tgt_EOS in seq:
+                EOS_idx = seq.index(self.tgt_EOS)
+                outputs.append(seq[:EOS_idx])
+            else:
+                outputs.append(seq)
+        return outputs
+
+    def _append_EOS(self, inputs):
+        inputs_EOS = [torch.cat((inp, inp.new_tensor([self.src_EOS]))) for inp in inputs]
+        return inputs_EOS
+
+    def _append_BOS(self, targets):
+        BOS_targets = [torch.cat((target.new_tensor([self.tgt_BOS]), target)) for target in targets]
+        return BOS_targets
+
+    def _append_EOS_flatten(self, targets):
+        EOS_targets = [torch.cat((target, target.new_tensor([self.tgt_EOS]))) for target in targets]
+        return torch.cat(EOS_targets)
+
+    def _flatten_and_unpad(self, decoded, lengths):
+        # decoded: (batch, max_length, embed_dim)
+        unpadded = [batch[:l] for batch, l in zip(decoded, lengths)]
+        flattened = torch.cat(unpadded, dim=0)
+        return flattened # (n_tokens, embed_dim)
+
+
+class Seq2Seq(Seq2SeqBase):
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                  src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, rnn='lstm'):
-        super().__init__()
+        super().__init__(src_EOS, tgt_BOS, tgt_EOS)
         self.encoder = RNNEncoder(embed_size, hidden_size, src_vocab_size,
                                    bidirectional=bidirectional, num_layers=num_layers, rnn=rnn)
         self.dec_hidden_size = hidden_size*(1+bidirectional)
         self.decoder = RNNEncoder(embed_size, self.dec_hidden_size, tgt_vocab_size,
                                    bidirectional=False, num_layers=num_layers, rnn=rnn)
-        self.out_mlp = MLP(dims=[self.dec_hidden_size, tgt_vocab_size])
-
-        self.src_EOS = src_EOS
-        self.tgt_BOS = tgt_BOS
-        self.tgt_EOS = tgt_EOS
+        self.generator = MLP(dims=[self.dec_hidden_size, tgt_vocab_size])
 
     def encode(self, inputs):
-        inputs = self._append_EOS(inputs)
         (outputs, lengths), hiddens = self.encoder(inputs)
         if self.encoder.num_directions == 2:
             if isinstance(self.encoder.rnn, nn.LSTM):
@@ -46,13 +77,14 @@ class Seq2Seq(nn.Module):
         self.train()
         self.zero_grad()
         # encoding
-        (enc_outputs, enc_seq_lens), enc_hiddens = self.encode(inputs) # (num_layers, batch, dec_hidden_size)
+        inputs_EOS = self._append_EOS(inputs)
+        (enc_outputs, enc_seq_lens), enc_hiddens = self.encode(inputs_EOS) # (num_layers, batch, dec_hidden_size)
         # decoding
         BOS_targets = self._append_BOS(targets)
         decoded, _ = self.decode(BOS_targets, enc_hiddens, enc_outputs, enc_seq_lens)
         # predicting
         targets_EOS = self._append_EOS_flatten(targets)
-        loss = self.out_mlp.fit(decoded, targets_EOS, optimizer)
+        loss = self.generator.fit(decoded, targets_EOS, optimizer)
         return loss
 
     def predict(self, inputs, max_len=100):
@@ -66,7 +98,7 @@ class Seq2Seq(nn.Module):
             end_flags = inputs[0].new_zeros(batchsize)
             for i in range(max_len):
                 decoded, hiddens  = self.decode(input_tokens, hiddens, enc_outputs, enc_seq_lens) # (n_tokens, dec_hidden_size)
-                output_tokens = self.out_mlp.predict(decoded)
+                output_tokens = self.generator.predict(decoded)
                 generated.append(output_tokens)
                 end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
                 if end_flags.sum() == batchsize: break
@@ -74,33 +106,6 @@ class Seq2Seq(nn.Module):
         generated = torch.stack(generated, dim=1).tolist()
         return self._remove_EOS(generated)
 
-    def _remove_EOS(self, generated):
-        outputs = []
-        for seq in generated:
-            if self.tgt_EOS in seq:
-                EOS_idx = seq.index(self.tgt_EOS)
-                outputs.append(seq[:EOS_idx])
-            else:
-                outputs.append(seq)
-        return outputs
-
-    def _append_EOS(self, inputs):
-        inputs_EOS = [torch.cat((inp, inp.new_tensor([self.src_EOS]))) for inp in inputs]
-        return inputs_EOS
-
-    def _append_BOS(self, targets):
-        BOS_targets = [torch.cat((target.new_tensor([self.tgt_BOS]), target)) for target in targets]
-        return BOS_targets
-
-    def _append_EOS_flatten(self, targets):
-        EOS_targets = [torch.cat((target, target.new_tensor([self.tgt_EOS]))) for target in targets]
-        return torch.cat(EOS_targets)
-
-    def _flatten_and_unpad(self, decoded, lengths):
-        # (batch, max_length, embed_dim)
-        unpadded = [batch[:l] for batch, l in zip(decoded, lengths)]
-        flattened = torch.cat(unpadded, dim=0)
-        return flattened
 
 from .attentions import DotAttn
 
@@ -111,19 +116,16 @@ class AttnSeq2Seq(Seq2Seq):
         super().__init__(embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                          src_EOS, tgt_BOS, tgt_EOS, num_layers, bidirectional, rnn)
         self.attn_hidden = nn.Linear(self.dec_hidden_size*2, self.dec_hidden_size)
-        self.out_mlp = MLP(dims=[self.dec_hidden_size, tgt_vocab_size])
+        self.generator = MLP(dims=[self.dec_hidden_size, tgt_vocab_size])
         self.attention = DotAttn(scaled=True)
-        self.get_attn = False
-        self.attn_weights = []
+        self.attn_weights = None
 
     def decode(self, inputs, enc_hiddens, enc_outputs, enc_seq_lens):
         (decoded, dec_seq_lens), hiddens = self.decoder(inputs, enc_hiddens) # (batch, max(dec_seq_lens), dec_hidden_size)
         # attention
-        weights = self.attention(keys=enc_outputs, queries=decoded,
-                                 keys_len=enc_seq_lens, queries_len=dec_seq_lens) # (batch, max(dec_seq_lens), max(enc_seq_lens))
-        if self.get_attn:
-            self.attn_weights.append(weights)
-        attn_vecs = torch.bmm(weights, enc_outputs) # (batch, max(dec_seq_lens), dec_hidden_size)
+        attn_vecs, self.attn_weights = self.attention(queries=decoded, keys=enc_outputs, values=enc_outputs,
+                                 query_lens=dec_seq_lens, key_lens=enc_seq_lens)  # (batch, max(dec_seq_lens), dec_hidden_size)
+
         # decoded + attention
         decoded_attn = F.tanh(self.attn_hidden(torch.cat((decoded, attn_vecs), dim=2)))
         decoded_attn = self._flatten_and_unpad(decoded_attn, dec_seq_lens) # (n_tokens, dec_hidden_size*2)

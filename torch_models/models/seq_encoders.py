@@ -14,17 +14,32 @@ class SeqEncoderBase(nn.Module):
         self.vocab_size = vocab_size
         self.embedding = nn.Embedding(vocab_size+1, embed_size, padding_idx=vocab_size)
 
-class BoV(SeqEncoderBase):
-    def __init__(self, embed_size, vocab_size):
-        super().__init__(embed_size, vocab_size)
-        self.output_size = embed_size
-
     def _get_embeds(self, inputs):
         # flatten inputs, get embeddings, then split them back
         seq_lengths = [len(seq) for seq in inputs]
         cat_seqs = torch.cat(inputs)
         embed_seqs = self.embedding(cat_seqs).split(seq_lengths)
         return embed_seqs
+
+    def _sort_seqs(self, seqs):
+        idx_and_seqs = list(enumerate(seqs))
+        idx_and_seqs.sort(key=lambda x: len(x[1]), reverse=True)
+        original_idx, sorted_seqs = zip(*idx_and_seqs)
+        return original_idx, sorted_seqs
+
+    def _pad_seqs(self, sorted_seqs):
+        lengths = [len(seq) for seq in sorted_seqs]
+        max_length = max(lengths)
+        padded_seqs = [torch.cat((sorted_seqs[i],
+            self.embedding.padding_idx*sorted_seqs[i].new_ones(max_length - lengths[i])))
+                      for i in range(len(sorted_seqs))]
+        padded_seqs = torch.stack(padded_seqs, dim=0)
+        return padded_seqs, lengths
+
+class BoV(SeqEncoderBase):
+    def __init__(self, embed_size, vocab_size):
+        super().__init__(embed_size, vocab_size)
+        self.output_size = embed_size
 
     def forward(self, inputs):
         embed_seqs = self._get_embeds(inputs)
@@ -60,21 +75,6 @@ class RNNEncoder(SeqEncoderBase):
         # packing
         packed_embeds = pack_padded_sequence(embeds, original_lengths, batch_first=True)
         return packed_embeds, original_idx
-
-    def _sort_seqs(self, seqs):
-        idx_and_seqs = list(enumerate(seqs))
-        idx_and_seqs.sort(key=lambda x: len(x[1]), reverse=True)
-        original_idx, sorted_seqs = zip(*idx_and_seqs)
-        return original_idx, sorted_seqs
-
-    def _pad_seqs(self, sorted_seqs):
-        lengths = [len(seq) for seq in sorted_seqs]
-        max_length = lengths[0]
-        padded_seqs = [torch.cat((sorted_seqs[i],
-            self.embedding.padding_idx*sorted_seqs[i].new_ones(max_length - lengths[i])))
-                      for i in range(len(sorted_seqs))]
-        padded_seqs = torch.stack(padded_seqs, dim=0)
-        return padded_seqs, lengths
 
     def _reorder_batch(self, tensor, original_idx):
         _, idxs = torch.sort(torch.tensor(original_idx))

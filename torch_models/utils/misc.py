@@ -7,6 +7,10 @@ def get_device(show_log=True):
         print(device)
     return device
 
+def initialize_embed():
+    # TODO
+    return
+
 def get_closest_word_vecotors(word, embedding, vocab_dict, topk=10):
     '''
     Get a list of the top-k closest word vecotors.
