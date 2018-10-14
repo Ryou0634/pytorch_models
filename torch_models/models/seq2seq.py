@@ -51,7 +51,8 @@ class Seq2Seq(Seq2SeqBase):
         self.generator = MLP(dims=[self.dec_hidden_size, tgt_vocab_size])
 
     def encode(self, inputs):
-        (outputs, lengths), hiddens = self.encoder(inputs)
+        inputs_EOS = self._append_EOS(inputs)
+        (outputs, lengths), hiddens = self.encoder(inputs_EOS)
         if self.encoder.num_directions == 2:
             if isinstance(self.encoder.rnn, nn.LSTM):
                 hiddens, cells = hiddens
@@ -80,8 +81,7 @@ class Seq2Seq(Seq2SeqBase):
         self.train()
         self.zero_grad()
         # encoding
-        inputs_EOS = self._append_EOS(inputs)
-        encoded = self.encode(inputs_EOS) # (num_layers, batch, dec_hidden_size)
+        encoded = self.encode(inputs) # (num_layers, batch, dec_hidden_size)
         # decoding
         BOS_targets = self._append_BOS(targets)
         decoded, _ = self.decode(BOS_targets, encoded)

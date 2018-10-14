@@ -171,7 +171,8 @@ class Transformer(Seq2SeqBase):
                 nn.init.xavier_uniform_(p)
 
     def encode(self, inputs):
-        encoded, enc_seq_lens = self.encoder(inputs)
+        inputs_EOS = self._append_EOS(inputs)
+        encoded, enc_seq_lens = self.encoder(inputs_EOS)
         return encoded, enc_seq_lens
 
     def decode(self, inputs, encoded, enc_seq_lens):
@@ -184,8 +185,7 @@ class Transformer(Seq2SeqBase):
         self.zero_grad()
 
         # encoding
-        inputs_EOS = self._append_EOS(inputs)
-        encoded, enc_seq_lens = self.encode(inputs_EOS)
+        encoded, enc_seq_lens = self.encode(inputs)
         # decoding
         BOS_targets = self._append_BOS(targets)
         decoded = self.decode(BOS_targets, encoded, enc_seq_lens)
