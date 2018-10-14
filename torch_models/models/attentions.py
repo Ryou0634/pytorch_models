@@ -37,7 +37,7 @@ class DotAttn(nn.Module):
             mask[:, k_len:] = 0
         if self.subsequent_mask: # used in self attention in decoder
             masks = np.tril(masks)
-        masks = torch.from_numpy(masks)
+        masks = torch.from_numpy(masks).to(scores.device)
         scores.masked_fill_(masks==0, float('-inf'))
 
         weights = F.softmax(scores, dim=2)
