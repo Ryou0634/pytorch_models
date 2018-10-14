@@ -54,14 +54,14 @@ class Seq2SeqBase(nn.Module):
 
 class Seq2Seq(Seq2SeqBase):
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, rnn='lstm'):
+                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='lstm'):
         super().__init__(src_EOS, tgt_BOS, tgt_EOS)
         self.encoder = RNNEncoder(embed_size, hidden_size, src_vocab_size,
-                                   bidirectional=bidirectional, num_layers=num_layers, rnn=rnn)
+                                  bidirectional=bidirectional, num_layers=num_layers, dropout=dropout, rnn=rnn)
         self.dec_hidden_size = hidden_size*(1+bidirectional)
         self.decoder = RNNEncoder(embed_size, self.dec_hidden_size, tgt_vocab_size,
-                                   bidirectional=False, num_layers=num_layers, rnn=rnn)
-        self.generator = MLP(dims=[self.dec_hidden_size, tgt_vocab_size])
+                                   bidirectional=False, num_layers=num_layers, dropout=dropout, rnn=rnn)
+        self.generator = MLP(dims=[self.dec_hidden_size, tgt_vocab_size], dropout=dropout)
 
     def encode(self, inputs):
         inputs_EOS = self._append_EOS(inputs)
@@ -117,11 +117,13 @@ from .attentions import DotAttn
 class AttnSeq2Seq(Seq2Seq):
     # A fairly standard encoder-decoder architecture with the global attention mechanism in Luong et al. (2015).
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, rnn='lstm'):
+                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='lstm'):
         super().__init__(embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                         src_EOS, tgt_BOS, tgt_EOS, num_layers, bidirectional, rnn)
+                         src_EOS, tgt_BOS, tgt_EOS,
+                         num_layers=num_layers, bidirectional=bidirectional,
+                         dropout=dropout, rnn=rnn)
         self.attn_hidden = nn.Linear(self.dec_hidden_size*2, self.dec_hidden_size)
-        self.generator = MLP(dims=[self.dec_hidden_size, tgt_vocab_size])
+        self.generator = MLP(dims=[self.dec_hidden_size, tgt_vocab_size], dropout=dropout)
         self.attention = DotAttn(scaled=True)
         self.attn_weights = None
 

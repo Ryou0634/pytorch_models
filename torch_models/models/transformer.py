@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import math
-from torch_models import SeqEncoderBase
+from torch_models.models import SeqEncoderBase
 
 class TransformerEmbedding(SeqEncoderBase):
     def __init__(self, embed_size, vocab_size):
@@ -35,7 +35,7 @@ class PositionalEncoding(nn.Module):
                                    requires_grad=False)
         return self.dropout(inputs)
 
-from torch_models import DotAttn
+from torch_models.models import DotAttn
 class MultiHeadedAttention(nn.Module):
     def __init__(self, input_size, n_head, subsequent_mask=False, dropout=0.1):
         super().__init__()
@@ -152,7 +152,7 @@ class TransformerDecoder(nn.Module):
             x = layer(x, seq_lens, enc_outputs, enc_seq_lens)
         return x, seq_lens
 
-from torch_models import Seq2SeqBase, MLP
+from torch_models.models import Seq2SeqBase, MLP
 class Transformer(Seq2SeqBase):
     def __init__(self, size, n_head, src_vocab_size, tgt_vocab_size,
                  src_EOS, tgt_BOS, tgt_EOS, n_layers=1, dropout=0.1):

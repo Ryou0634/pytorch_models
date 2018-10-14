@@ -47,7 +47,8 @@ class BoV(SeqEncoderBase):
         return torch.stack(averaged)
 
 class RNNEncoder(SeqEncoderBase):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, rnn='rnn'):
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1,
+                 dropout=0, rnn='rnn'):
         super().__init__(embed_size, vocab_size)
         if rnn is 'rnn':
             rnn_unit = nn.RNN
@@ -59,7 +60,7 @@ class RNNEncoder(SeqEncoderBase):
             raise Error("rnn must be ['rnn', 'lstm', 'gru']")
 
         self.rnn = rnn_unit(embed_size, hidden_size,
-                        bidirectional=bidirectional, num_layers=num_layers)
+                        bidirectional=bidirectional, num_layers=num_layers, dropout=dropout)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_directions = 1+bidirectional
@@ -105,8 +106,9 @@ class RNNEncoder(SeqEncoderBase):
         return (tensors, lengths), hiddens # (batch, seq_len, num_directions * hidden_size), (num_layers * num_directions, batch, hidden_size)
 
 class RNNLastHidden(RNNEncoder):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, rnn='lstm'):
-        super().__init__(embed_size, hidden_size, vocab_size, bidirectional, num_layers, rnn)
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, dropout=0, rnn='lstm'):
+        super().__init__(embed_size=embed_size, hidden_size=hidden_size, vocab_size=vocab_size,
+                         bidirectional=bidirectional, num_layers=num_layers, dropout=dropout, rnn=rnn)
 
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
@@ -119,8 +121,8 @@ class RNNLastHidden(RNNEncoder):
         return hidden
 
 class RNNMaxPool(RNNEncoder):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, rnn='lstm'):
-        super().__init__(embed_size, hidden_size, vocab_size, bidirectional, num_layers, rnn)
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=False, num_layers=1, dropout=0, rnn='lstm'):
+        super().__init__(embed_size, hidden_size, vocab_size, bidirectional, num_layers, dropout, rnn)
 
     def forward(self, inputs):
         packed_embeds, original_idx = self.get_packed_embeds(inputs)
