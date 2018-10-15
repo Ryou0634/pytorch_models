@@ -51,8 +51,9 @@ class MLP(nn.Module):
         self.zero_grad()
         outputs = self.forward(inputs)
         loss = self.criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
+        if optimizer:
+            loss.backward()
+            optimizer.step()
         return loss.item()
 
     def predict(self, inputs):

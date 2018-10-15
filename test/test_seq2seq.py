@@ -7,7 +7,10 @@ model = Seq2Seq(embed_size=1, hidden_size=5, src_vocab_size=2, tgt_vocab_size=3,
 
 def test_encode():
     inputs = [torch.LongTensor([1, 1]), torch.LongTensor([1]), torch.LongTensor([1, 1])]
-    (outputs, lengths), hiddens = model.encode(inputs)
+    encoded = model.encode(inputs)
+    outputs = encoded['outputs']
+    lengths = encoded['lengths']
+    hiddens = encoded['hiddens']
     hiddens = hiddens[0]
 
     assert (outputs[0] == outputs[2]).all()

@@ -60,7 +60,7 @@ MLP(
 >>> optimizer = SGD(model.parameters(), lr=0.1)
 >>> trainer = Trainer(model, train_loader)
 >>> evaluator = EvaluatorC(model, test_loader)
->>> trainer.train(optimizer, max_epoch=10, evaluator=evaluator, show_log=True)
+>>> trainer.train_epoch(optimizer, max_epoch=10, evaluator=evaluator, show_log=True)
 epoch 0  	loss: 0.1835	accuracy: 0.9491
 epoch 1  	loss: 0.1595	accuracy: 0.9544
 epoch 2  	loss: 0.1428	accuracy: 0.956

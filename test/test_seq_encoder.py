@@ -22,14 +22,14 @@ def test_BoV():
 
     evaluator = EvaluatorC(model, test_loader)
     trainer = Trainer(model, train_loader)
-    trainer.train(optimizer, max_epoch=1,
-                  evaluator=evaluator, score_monitor=None, show_log=False, hook_func=None)
+    trainer.train_epoch(optimizer, max_epoch=1,
+                  evaluator=evaluator, score_monitor=None)
     assert True == (evaluator.evaluate() > 0.8)
 
 
 def test_LSTM():
     for enc in [RNNLastHidden, RNNMaxPool]:
-        for bidirectional in [False, True]:
+        for bidirectional in [None, 'cat', 'add']:
             for num_layers in [1, 2]:
                 encoder = enc(embed_size=10, hidden_size=15, vocab_size=10, bidirectional=bidirectional,
                               num_layers=num_layers, rnn='lstm').to(device)
@@ -39,6 +39,6 @@ def test_LSTM():
 
                 evaluator = EvaluatorC(model, test_loader)
                 trainer = Trainer(model, train_loader)
-                trainer.train(optimizer, max_epoch=1,
-                              evaluator=evaluator, score_monitor=None, show_log=False, hook_func=None)
+                trainer.train_epoch(optimizer, max_epoch=1,
+                              evaluator=evaluator, score_monitor=None)
                 assert True == (evaluator.evaluate() > 0.85)
