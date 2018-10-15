@@ -136,7 +136,7 @@ class RNNEncoder(SeqEncoderBase):
         return (tensors, lengths), hiddens
 
 class RNNLastHidden(RNNEncoder):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=None, num_layers=1, dropout=0, rnn='lstm'):
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional='cat', num_layers=1, dropout=0, rnn='lstm'):
         super().__init__(embed_size=embed_size, hidden_size=hidden_size, vocab_size=vocab_size,
                          bidirectional=bidirectional, num_layers=num_layers, dropout=dropout, rnn=rnn)
 
@@ -157,7 +157,7 @@ class RNNLastHidden(RNNEncoder):
         return hidden # (batch, output_size)
 
 class RNNMaxPool(RNNEncoder):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=None, num_layers=1, dropout=0, rnn='lstm'):
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional='cat', num_layers=1, dropout=0, rnn='lstm'):
         super().__init__(embed_size, hidden_size, vocab_size, bidirectional, num_layers, dropout, rnn)
 
     def forward(self, inputs):
