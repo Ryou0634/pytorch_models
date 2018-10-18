@@ -69,6 +69,13 @@ class Seq2Seq(Seq2SeqBase):
                                    bidirectional=None, num_layers=num_layers, dropout=dropout, rnn=rnn)
         self.generator = MLP(dims=[self.hidden_size, tgt_vocab_size], dropout=dropout)
 
+        self.initialize()
+
+    def initialize(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.uniform_(p, -0.1, 0.1)
+
     def encode(self, inputs):
         inputs_EOS = self._append_EOS(inputs)
         (enc_outputs, lengths), hiddens = self.encoder(inputs_EOS)
@@ -116,6 +123,8 @@ class AttnSeq2Seq(Seq2Seq):
         self.generator = MLP(dims=[self.hidden_size, tgt_vocab_size], dropout=dropout)
         self.attention = DotAttn(scaled=True)
         self.attn_weights = None
+
+        self.initialize()
 
     def decode(self, inputs, encoded):
         enc_hiddens = encoded['hiddens']
