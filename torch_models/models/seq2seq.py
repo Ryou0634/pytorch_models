@@ -1,7 +1,6 @@
 from torch_models.models import MLP, RNNEncoder
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class Seq2SeqBase(nn.Module):
     def __init__(self, src_EOS, tgt_BOS, tgt_EOS):
@@ -11,7 +10,10 @@ class Seq2SeqBase(nn.Module):
         self.tgt_EOS = tgt_EOS
 
     def fit(self, inputs, targets, optimizer):
-        self.train()
+        if optimizer:
+            self.train()
+        else:
+            self.eval()
         self.zero_grad()
         # encoding
         encoded = self.encode(inputs) # (num_layers, batch, hidden_size)
@@ -125,7 +127,7 @@ class AttnSeq2Seq(Seq2Seq):
                                  query_lens=dec_seq_lens, key_lens=enc_seq_lens)  # (batch, max(dec_seq_lens), hidden_size)
 
         # decoded + attention
-        decoded_attn = F.tanh(self.attn_hidden(torch.cat((decoded, attn_vecs), dim=2)))
+        decoded_attn = torch.tanh(self.attn_hidden(torch.cat((decoded, attn_vecs), dim=2)))
         decoded_attn = self._flatten_and_unpad(decoded_attn, dec_seq_lens) # (n_tokens, hidden_size*2)
         return {'outputs': decoded_attn,
                 'hiddens': hiddens}

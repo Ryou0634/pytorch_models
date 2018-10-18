@@ -55,3 +55,50 @@ def test_flatten_and_unpad():
                              [5, 5, 5]])
     for exp, seq in zip(expected, outputs):
         assert (exp == seq).all()
+
+
+import torch
+from my_utils import Dictionary, DataLoader
+from my_utils.toy_data import invert_seq
+from torch_models.utils import seq2seq
+def numericalize(dataset, src_dict, tgt_dict):
+    numericalized = [([src_dict(s) for s in src], [tgt_dict(t) for t in tgt]) for src, tgt in dataset]
+    return numericalized
+
+def get_toy_data_loader():
+    n_unique = 10
+    src_dict = Dictionary(['<EOS>'])
+    tgt_dict = Dictionary(['<BOS>', '<EOS>'])
+    for n in range(n_unique):
+        src_dict.add_word(str(n))
+        tgt_dict.add_word(str(n))
+    train = invert_seq(5000, n_unique=n_unique)
+    test = invert_seq(100, n_unique=n_unique)
+
+    device = torch.device('cpu')
+    trans_func = seq2seq(device)
+    train_loader = DataLoader(numericalize(train, src_dict, tgt_dict), batch_size=64, trans_func=trans_func)
+    test_loader = DataLoader(numericalize(test, src_dict, tgt_dict), batch_size=50, trans_func=trans_func)
+    return train_loader, test_loader, src_dict, tgt_dict
+
+from torch_models import AttnSeq2Seq
+from my_utils import Trainer, EvaluatorSeq, EvaluatorLoss
+from torch.optim import Adam, SGD
+def test_train():
+    train_loader, test_loader, src_dict, tgt_dict = get_toy_data_loader()
+    embed_size=64
+    dropout = 0
+    model = AttnSeq2Seq(embed_size=embed_size, hidden_size=embed_size, src_vocab_size=len(src_dict), tgt_vocab_size=len(tgt_dict),
+                        src_EOS=src_dict('<EOS>'), tgt_BOS=tgt_dict('<BOS>'), tgt_EOS=tgt_dict('<EOS>'),
+                        num_layers=2, bidirectional=True, dropout=dropout, rnn='lstm')
+
+
+    optimizer = Adam(model.parameters())
+    evaluator = EvaluatorSeq(model, test_loader, measure='BLEU')
+    # evaluator = EvaluatorLoss(model, test_loader)
+
+    trainer = Trainer(model, train_loader)
+    trainer.train_epoch(optimizer, max_epoch=3,
+                  evaluator=evaluator, score_monitor=None)
+    test_evaluator = EvaluatorSeq(model, test_loader, measure='BLEU')
+    assert 0.9 < test_evaluator.evaluate()

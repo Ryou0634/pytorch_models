@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class MLP(nn.Module):
     '''
@@ -47,10 +46,15 @@ class MLP(nn.Module):
         return output
 
     def fit(self, inputs, labels, optimizer):
-        self.train()
+        if optimizer:
+            self.train()
+        else:
+            self.eval()
+
         self.zero_grad()
         outputs = self.forward(inputs)
         loss = self.criterion(outputs, labels)
+
         if optimizer:
             loss.backward()
             optimizer.step()
