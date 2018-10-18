@@ -82,14 +82,14 @@ class RNNEncoder(SeqEncoderBase):
         embeds = self.embedding(padded_seqs) # (batch, max_len, embed_size)
         # packing
         packed_embeds = pack_padded_sequence(embeds, seq_lens, batch_first=True)
-        _, unperm_idx = perm_idx.sort()
-        return packed_embeds, unperm_idx
 
-    def _reorder_hiddens(self, hiddens, unperm_idx):
+        return packed_embeds, perm_idx
+
+    def _reorder_hiddens(self, hiddens, perm_idx):
         if isinstance(self.rnn, nn.LSTM):
             hiddens, cells = hiddens
-            hiddens = hiddens[:, unperm_idx]
-            cells = cells[:, unperm_idx]
+            hiddens = hiddens[:, perm_idx]
+            cells = cells[:, perm_idx]
             return (hiddens, cells)
         else:
             return hiddens[:, unperm_idx]
@@ -107,17 +107,17 @@ class RNNEncoder(SeqEncoderBase):
         return tensors, hiddens
 
     def forward(self, inputs, init_state=None):
-        packed_embeds, unperm_idx = self.get_packed_embeds(inputs)
-        if init_state is not None:
-            outputs, hiddens = self.rnn(packed_embeds, init_state)
-        else:
-            outputs, hiddens = self.rnn(packed_embeds)
+        packed_embeds, perm_idx = self.get_packed_embeds(inputs)
+        if init_state:
+            init_state = self._reorder_hiddens(init_state, perm_idx)
+        outputs, hiddens = self.rnn(packed_embeds, init_state)
         tensors, lengths = pad_packed_sequence(outputs, batch_first=True)
 
         if self.bidirectional and self.bidir_type == 'add':
             tensors, hiddens = self._add_along_direction(tensors, hiddens)
 
         # _reorder_batch
+        _, unperm_idx = perm_idx.sort()
         lengths = lengths[unperm_idx]
         tensors = tensors[unperm_idx]                        # (batch, seq_len, output_size)
         hiddens = self._reorder_hiddens(hiddens, unperm_idx) # (num_layers * num_directions, batch, hidden_size)
@@ -129,7 +129,7 @@ class RNNLastHidden(RNNEncoder):
                          bidirectional=bidirectional, num_layers=num_layers, dropout=dropout, rnn=rnn)
 
     def forward(self, inputs):
-        packed_embeds, unperm_idx = self.get_packed_embeds(inputs)
+        packed_embeds, perm_idx = self.get_packed_embeds(inputs)
         _, hiddens = self.rnn(packed_embeds) # (num_layers * num_directions, batch, hidden_size)
         if isinstance(self.rnn, nn.LSTM):
             hiddens = hiddens[0]
@@ -141,6 +141,7 @@ class RNNLastHidden(RNNEncoder):
             hidden = hidden[-1] # (batch, hidden_size)
         if self.bidirectional and self.bidir_type == 'cat':
             hidden = torch.cat([tensor for tensor in hiddens[-1]], dim=1) # (batch, output_size)
+        _, unperm_idx = perm_idx.sort()
         return hidden[unperm_idx] # (batch, output_size)
 
 class RNNMaxPool(RNNEncoder):
@@ -148,7 +149,7 @@ class RNNMaxPool(RNNEncoder):
         super().__init__(embed_size, hidden_size, vocab_size, bidirectional, num_layers, dropout, rnn)
 
     def forward(self, inputs):
-        packed_embeds, unperm_idx = self.get_packed_embeds(inputs)
+        packed_embeds, perm_idx = self.get_packed_embeds(inputs)
 
         outputs, _ = self.rnn(packed_embeds) # (batch, seq_len, num_directions * hidden_size)
         tensors, lengths = pad_packed_sequence(outputs, batch_first=True)
@@ -157,4 +158,5 @@ class RNNMaxPool(RNNEncoder):
         for tensor, length in zip(tensors, lengths):
             tensor[length:] = float('-inf')
         pooled, _ = torch.max(tensors, dim=1)
+        _, unperm_idx = perm_idx.sort()
         return pooled[unperm_idx] # (batch, output_size)

@@ -81,24 +81,22 @@ def get_toy_data_loader():
     test_loader = DataLoader(numericalize(test, src_dict, tgt_dict), batch_size=50, trans_func=trans_func)
     return train_loader, test_loader, src_dict, tgt_dict
 
-from torch_models import AttnSeq2Seq
+from torch_models import AttnSeq2Seq, Seq2Seq
 from my_utils import Trainer, EvaluatorSeq, EvaluatorLoss
 from torch.optim import Adam, SGD
 def test_train():
     train_loader, test_loader, src_dict, tgt_dict = get_toy_data_loader()
     embed_size=64
     dropout = 0
-    model = AttnSeq2Seq(embed_size=embed_size, hidden_size=embed_size, src_vocab_size=len(src_dict), tgt_vocab_size=len(tgt_dict),
-                        src_EOS=src_dict('<EOS>'), tgt_BOS=tgt_dict('<BOS>'), tgt_EOS=tgt_dict('<EOS>'),
-                        num_layers=2, bidirectional=True, dropout=dropout, rnn='lstm')
+    for enc_dec in [AttnSeq2Seq, Seq2Seq]:
+        model = enc_dec(embed_size=embed_size, hidden_size=embed_size, src_vocab_size=len(src_dict), tgt_vocab_size=len(tgt_dict),
+                            src_EOS=src_dict('<EOS>'), tgt_BOS=tgt_dict('<BOS>'), tgt_EOS=tgt_dict('<EOS>'),
+                            num_layers=1, bidirectional=True, dropout=dropout, rnn='lstm')
 
+        optimizer = Adam(model.parameters())
 
-    optimizer = Adam(model.parameters())
-    evaluator = EvaluatorSeq(model, test_loader, measure='BLEU')
-    # evaluator = EvaluatorLoss(model, test_loader)
-
-    trainer = Trainer(model, train_loader)
-    trainer.train_epoch(optimizer, max_epoch=3,
-                  evaluator=evaluator, score_monitor=None)
-    test_evaluator = EvaluatorSeq(model, test_loader, measure='BLEU')
-    assert 0.9 < test_evaluator.evaluate()
+        trainer = Trainer(model, train_loader)
+        trainer.train_epoch(optimizer, max_epoch=5,
+                      evaluator=None, score_monitor=None)
+        test_evaluator = EvaluatorSeq(model, test_loader, measure='accuracy')
+        assert 0.8 < test_evaluator.evaluate()
