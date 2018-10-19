@@ -44,33 +44,18 @@ class BoV(SeqEncoderBase):
         embed_seqs = self.embedding(cat_seqs).split(seq_lengths)
         return embed_seqs
 
-    def get_packed_embeds(self, inputs):
-        seq_lens = torch.LongTensor([len(seq) for seq in inputs])
-        # padding
-        padded_seqs = self._pad_seqs(inputs, seq_lens) # (batch, max_len)
-        # sorting
-        seq_lens, perm_idx = seq_lens.sort(descending=True)
-        padded_seqs = padded_seqs[perm_idx]
-        # get embedding
-        embeds = self.embedding(padded_seqs) # (batch, max_len, embed_size)
-        # packing
-        packed_embeds = pack_padded_sequence(embeds, seq_lens, batch_first=True)
+    def forward(self, inputs):
+        embed_seqs = self._get_embeds(inputs)
+        averaged = [torch.mean(embed_seqs[i], dim=0) for i in range(len(embed_seqs))]
+        return torch.stack(averaged)
 
-        return packed_embeds, perm_idx
+
 
 class RNNEncoder(SeqEncoderBase):
     def __init__(self, embed_size, hidden_size, vocab_size, bidirectional=None, num_layers=1,
-                 dropout=0, rnn='rnn'):
+                 dropout=0, rnn='RNN'):
         super().__init__(embed_size, vocab_size)
-
-        if rnn is 'rnn':
-            rnn_unit = nn.RNN
-        elif rnn is 'lstm':
-            rnn_unit = nn.LSTM
-        elif rnn is 'gru':
-            rnn_unit = nn.GRU
-        else:
-            raise Exception("rnn must be ['rnn', 'lstm', 'gru']")
+        rnn_unit = eval('nn.'+rnn)
 
         if bidirectional is None:
             self.bidirectional = False
@@ -145,7 +130,7 @@ class RNNEncoder(SeqEncoderBase):
         return (tensors, lengths), hiddens
 
 class RNNLastHidden(RNNEncoder):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional='cat', num_layers=1, dropout=0, rnn='lstm'):
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional='cat', num_layers=1, dropout=0, rnn='LSTM'):
         super().__init__(embed_size=embed_size, hidden_size=hidden_size, vocab_size=vocab_size,
                          bidirectional=bidirectional, num_layers=num_layers, dropout=dropout, rnn=rnn)
 
@@ -166,7 +151,7 @@ class RNNLastHidden(RNNEncoder):
         return hidden[unperm_idx] # (batch, output_size)
 
 class RNNMaxPool(RNNEncoder):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional='cat', num_layers=1, dropout=0, rnn='lstm'):
+    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional='cat', num_layers=1, dropout=0, rnn='LSTM'):
         super().__init__(embed_size, hidden_size, vocab_size, bidirectional, num_layers, dropout, rnn)
 
     def forward(self, inputs):

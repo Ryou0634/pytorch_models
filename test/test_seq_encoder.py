@@ -24,22 +24,25 @@ def test_BoV():
     trainer = Trainer(model, train_loader)
     trainer.train_epoch(optimizer, max_epoch=1,
                   evaluator=evaluator, score_monitor=None)
-    assert True == (evaluator.evaluate() > 0.8)
+    assert evaluator.evaluate() > 0.8
 
+import pytest
+@pytest.mark.parametrize(
+    'rnn, enc, bidirectional, num_layers', [
+        ('RNN', RNNMaxPool, 'cat', 2),
+        ('GRU', RNNMaxPool, 'add', 1),
+        ('LSTM', RNNLastHidden, None, 1),
+    ]
+)
+def test_RNN(rnn, enc, bidirectional, num_layers):
+    encoder = enc(embed_size=10, hidden_size=15, vocab_size=10, bidirectional=bidirectional,
+                  num_layers=num_layers, rnn=rnn).to(device)
+    model = SingleClassifier(encoder=encoder, output_size=2, hidden_size=None,
+                             activation='Tanh', dropout=0, freeze_encoder=False).to(device)
+    optimizer = Adam(model.parameters())
 
-def test_RNN():
-    for rnn in ['lstm', 'gru', 'rnn']:
-        for enc in [RNNLastHidden, RNNMaxPool]:
-            for bidirectional in [None, 'cat', 'add']:
-                for num_layers in [1, 2]:
-                    encoder = enc(embed_size=10, hidden_size=15, vocab_size=10, bidirectional=bidirectional,
-                                  num_layers=num_layers, rnn='lstm').to(device)
-                    model = SingleClassifier(encoder=encoder, output_size=2, hidden_size=None,
-                                             activation='Tanh', dropout=0, freeze_encoder=False).to(device)
-                    optimizer = Adam(model.parameters())
-
-                    evaluator = EvaluatorC(model, test_loader)
-                    trainer = Trainer(model, train_loader)
-                    trainer.train_epoch(optimizer, max_epoch=1,
-                                  evaluator=evaluator, score_monitor=None)
-                    assert True == (evaluator.evaluate() > 0.85)
+    evaluator = EvaluatorC(model, test_loader)
+    trainer = Trainer(model, train_loader)
+    trainer.train_epoch(optimizer, max_epoch=1,
+                  evaluator=evaluator, score_monitor=None)
+    assert evaluator.evaluate() > 0.85

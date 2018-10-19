@@ -56,7 +56,7 @@ class Seq2SeqBase(nn.Module):
 
 class Seq2Seq(Seq2SeqBase):
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='lstm',
+                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='LSTM',
                  init_w=0.1):
         if bidirectional:
             bidir_type = 'add'
@@ -115,7 +115,7 @@ from .attentions import DotAttn
 class AttnSeq2Seq(Seq2Seq):
     # A fairly standard encoder-decoder architecture with the global attention mechanism in Luong et al. (2015).
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='lstm',
+                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='LSTM',
                  attention='dot', attn_hidden='linear', init_w=0.1):
         super().__init__(embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                          src_EOS, tgt_BOS, tgt_EOS,

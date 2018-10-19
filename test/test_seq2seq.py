@@ -1,9 +1,10 @@
+
 import torch
 from torch_models.models import Seq2Seq
 
 model = Seq2Seq(embed_size=1, hidden_size=5, src_vocab_size=2, tgt_vocab_size=3,
                 src_EOS=0, tgt_BOS=0, tgt_EOS=2, num_layers=1, bidirectional=False,
-                rnn='lstm')
+                rnn='LSTM')
 
 def test_encode():
     inputs = [torch.LongTensor([1, 1]), torch.LongTensor([1]), torch.LongTensor([1, 1])]
@@ -83,19 +84,26 @@ def get_toy_data_loader():
 from torch_models import AttnSeq2Seq, Seq2Seq
 from my_utils import Trainer, EvaluatorSeq, EvaluatorLoss
 from torch.optim import Adam, SGD
-def test_train():
+
+import pytest
+@pytest.mark.parametrize(
+    "klass, measure", [
+        (Seq2Seq, "sent_BLEU"),
+        (AttnSeq2Seq, "BLEU"),
+    ]
+)
+def test_train(klass, measure):
     train_loader, test_loader, src_dict, tgt_dict = get_toy_data_loader()
     embed_size=64
     dropout = 0
-    for enc_dec in [AttnSeq2Seq, Seq2Seq]:
-        model = enc_dec(embed_size=embed_size, hidden_size=embed_size, src_vocab_size=len(src_dict), tgt_vocab_size=len(tgt_dict),
-                            src_EOS=src_dict('<EOS>'), tgt_BOS=tgt_dict('<BOS>'), tgt_EOS=tgt_dict('<EOS>'),
-                            num_layers=1, bidirectional=True, dropout=dropout, rnn='lstm')
+    model = klass(embed_size=embed_size, hidden_size=embed_size, src_vocab_size=len(src_dict), tgt_vocab_size=len(tgt_dict),
+                        src_EOS=src_dict('<EOS>'), tgt_BOS=tgt_dict('<BOS>'), tgt_EOS=tgt_dict('<EOS>'),
+                        num_layers=1, bidirectional=True, dropout=dropout, rnn='LSTM')
 
-        optimizer = Adam(model.parameters())
+    optimizer = Adam(model.parameters())
 
-        trainer = Trainer(model, train_loader)
-        trainer.train_epoch(optimizer, max_epoch=5,
-                      evaluator=None, score_monitor=None)
-        test_evaluator = EvaluatorSeq(model, test_loader, measure='accuracy')
-        assert 0.8 < test_evaluator.evaluate()
+    trainer = Trainer(model, train_loader)
+    trainer.train_epoch(optimizer, max_epoch=5,
+                  evaluator=None, score_monitor=None)
+    test_evaluator = EvaluatorSeq(model, test_loader, measure=measure)
+    assert 0.8 < test_evaluator.evaluate()
