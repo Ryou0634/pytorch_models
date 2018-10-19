@@ -56,7 +56,6 @@ def test_flatten_and_unpad():
     for exp, seq in zip(expected, outputs):
         assert (exp == seq).all()
 
-
 import torch
 from my_utils import Dictionary, DataLoader
 from my_utils.toy_data import invert_seq

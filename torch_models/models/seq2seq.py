@@ -103,7 +103,7 @@ class Seq2Seq(Seq2SeqBase):
                 output_tokens = self.generator.predict(decoded['outputs'])
                 generated.append(output_tokens)
                 end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
-                if end_flags.sum() == batchsize: break
+                if end_flags.sum() == batchsize: break # end if all flags are 1
                 input_tokens = output_tokens.view(-1, 1)
                 encoded['hiddens'] = decoded['hiddens']
         generated = torch.stack(generated, dim=1).tolist()
@@ -114,15 +114,24 @@ from .attentions import DotAttn
 class AttnSeq2Seq(Seq2Seq):
     # A fairly standard encoder-decoder architecture with the global attention mechanism in Luong et al. (2015).
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='lstm'):
+                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='lstm',
+                 attention='dot', attn_hidden='linear'):
         super().__init__(embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                          src_EOS, tgt_BOS, tgt_EOS,
                          num_layers=num_layers, bidirectional=bidirectional,
                          dropout=dropout, rnn=rnn)
-        self.attn_hidden = nn.Linear(self.hidden_size*2, self.hidden_size)
+
         self.generator = MLP(dims=[self.hidden_size, tgt_vocab_size], dropout=dropout)
-        self.attention = DotAttn(scaled=True)
+        if attention == 'dot':
+            self.attention = DotAttn()
         self.attn_weights = None
+
+        if attn_hidden == 'linear':
+            self.attn_hidden = nn.Linear(self.hidden_size*2, self.hidden_size)
+        elif attn_hidden == 'add':
+            self.attn_hidden = None
+        else:
+            raise Exception("attn_hidden: ['linear', 'add']")
 
         self.initialize()
 
@@ -133,10 +142,13 @@ class AttnSeq2Seq(Seq2Seq):
         (decoded, dec_seq_lens), hiddens = self.decoder(inputs, enc_hiddens) # (batch, max(dec_seq_lens), hidden_size)
         # attention
         attn_vecs, self.attn_weights = self.attention(queries=decoded, keys=enc_outputs, values=enc_outputs,
-                                 query_lens=dec_seq_lens, key_lens=enc_seq_lens)  # (batch, max(dec_seq_lens), hidden_size)
+                                       query_lens=dec_seq_lens, key_lens=enc_seq_lens)  # (batch, max(dec_seq_lens), hidden_size)
 
         # decoded + attention
-        decoded_attn = torch.tanh(self.attn_hidden(torch.cat((decoded, attn_vecs), dim=2)))
+        if self.attn_hidden:
+            decoded_attn = torch.tanh(self.attn_hidden(torch.cat((decoded, attn_vecs), dim=2)))
+        else:
+            decoded_attn = decoded + attn_vecs
         decoded_attn = self._flatten_and_unpad(decoded_attn, dec_seq_lens) # (n_tokens, hidden_size*2)
         return {'outputs': decoded_attn,
                 'hiddens': hiddens}
