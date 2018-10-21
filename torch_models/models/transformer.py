@@ -195,7 +195,7 @@ class Transformer(Seq2SeqBase):
             for i in range(max_len):
                 decoded = self.decode(input_tokens, encoded) # (n_tokens, dec_hidden_size)
                 output_tokens = self.generator.predict(decoded['outputs']) # (batchsize*seq_len)
-                output_tokens = output_tokens.view(batchsize, -1)[:, -1] #(batchsize, seq_len)
+                output_tokens = output_tokens.view(batchsize, -1)[:, -1] #(batchsize, seq_len)[:, -1]
                 generated.append(output_tokens) # append the latest new tokens
                 end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
                 if end_flags.sum() == batchsize: break

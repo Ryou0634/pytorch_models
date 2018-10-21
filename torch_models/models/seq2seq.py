@@ -1,13 +1,17 @@
-from torch_models.models import MLP, RNNEncoder
+from torch_models.models import MLP, RNNEncoder, BeamSearcher
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
 
 class Seq2SeqBase(nn.Module):
-    def __init__(self, src_EOS, tgt_BOS, tgt_EOS):
+    def __init__(self, src_EOS, tgt_BOS, tgt_EOS, beam_width=1):
         super().__init__()
         self.src_EOS = src_EOS
         self.tgt_BOS = tgt_BOS
         self.tgt_EOS = tgt_EOS
+        self.beam_width = beam_width
 
     def fit(self, inputs, targets, optimizer):
         if optimizer:
@@ -53,16 +57,16 @@ class Seq2SeqBase(nn.Module):
         flattened = torch.cat(unpadded, dim=0)
         return flattened # (n_tokens, embed_dim)
 
-
+import numpy as np
 class Seq2Seq(Seq2SeqBase):
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                  src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='LSTM',
-                 init_w=0.1):
+                 init_w=0.1, beam_width=1):
         if bidirectional:
             bidir_type = 'add'
         else:
             bidir_type = None
-        super().__init__(src_EOS, tgt_BOS, tgt_EOS)
+        super().__init__(src_EOS, tgt_BOS, tgt_EOS, beam_width)
         self.encoder = RNNEncoder(embed_size, hidden_size, src_vocab_size,
                                   bidirectional=bidir_type, num_layers=num_layers, dropout=dropout, rnn=rnn)
         self.hidden_size = hidden_size
@@ -80,9 +84,9 @@ class Seq2Seq(Seq2SeqBase):
     def encode(self, inputs):
         inputs_EOS = self._append_EOS(inputs)
         (enc_outputs, lengths), hiddens = self.encoder(inputs_EOS)
-        return {'outputs': enc_outputs,
+        return {'outputs': enc_outputs, # (batch, seq_len, output_size)
                 'lengths': lengths,
-                'hiddens': hiddens}
+                'hiddens': hiddens}     # (num_layers * num_directions, batch, hidden_size)
 
     def decode(self, inputs, encoded):
         (decoded, lengths), hiddens = self.decoder(inputs, encoded['hiddens']) # (batch, max(dec_seq_lens), hidden_size)
@@ -90,18 +94,50 @@ class Seq2Seq(Seq2SeqBase):
         return {'outputs': dec_outputs,
                 'hiddens': hiddens}
 
-    def predict(self, inputs, max_len=100):
+
+    def beam_search(self, input, max_len=100):
+        """input allows only batchsize 1"""
         self.eval()
-        generated = []
+        generated = [] # contains selected idxs in each time step
+        beam_searcher = BeamSearcher(self.beam_width, self.tgt_EOS)
+
+        with torch.no_grad():
+            # encoding
+            encoded = self.encode(input.repeat(self.beam_width, 1))
+            input_tokens = input[0].new_tensor([[self.tgt_BOS] for _ in range(self.beam_width)]) # (beam_width, 1)
+            for i in range(max_len):
+                decoded  = self.decode(input_tokens, encoded) # (beam_width, hidden_size)
+                log_p = F.log_softmax(self.generator.forward(decoded['outputs']), dim=1) # (beam_width, tgt_vocab_size)
+                next_tokens, parent_hypos = beam_searcher.step(i, log_p)
+                if beam_searcher.width == 0: break
+                # preparing for the next iteration
+                input_tokens = next_tokens.view(beam_searcher.width, 1)
+                encoded['hiddens'] = self.decoder._reorder_hiddens(decoded['hiddens'], parent_hypos)
+                encoded['outputs'] = encoded['outputs'][:beam_searcher.width]
+                encoded['lengths'] = encoded['lengths'][:beam_searcher.width]
+        return beam_searcher.hypos + beam_searcher.end_hypos
+
+    def predict(self, inputs, max_len=100):
+        predicted = []
+        for inpt in inputs:
+            top_seqs = self.beam_search(inpt, max_len)
+            top_seq = max(top_seqs, key=lambda x: x['score'])['seq']
+            predicted.append(top_seq)
+        return predicted
+
+    def _greedy_predict(self, inputs, max_len=100):
+        # depricated
+        self.eval()
+        generated = [] # contains selected idxs in each time step
         with torch.no_grad():
             # encoding
             encoded = self.encode(inputs) # (num_layers * num_directions, batch, hidden_size)
             batchsize = len(inputs)
-            input_tokens = inputs[0].new_tensor([self.tgt_BOS for _ in range(batchsize)]).view(-1, 1)
+            input_tokens = inputs[0].new_tensor([self.tgt_BOS for _ in range(batchsize)]).view(-1, 1) # (batchsize, 1)
             end_flags = inputs[0].new_zeros(batchsize)
             for i in range(max_len):
-                decoded  = self.decode(input_tokens, encoded) # (n_tokens, hidden_size)
-                output_tokens = self.generator.predict(decoded['outputs'])
+                decoded  = self.decode(input_tokens, encoded) # (batchsize, hidden_size)
+                output_tokens = self.generator.predict(decoded['outputs']) # (batchsize,)
                 generated.append(output_tokens)
                 end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
                 if end_flags.sum() == batchsize: break # end if all flags are 1
@@ -116,11 +152,11 @@ class AttnSeq2Seq(Seq2Seq):
     # A fairly standard encoder-decoder architecture with the global attention mechanism in Luong et al. (2015).
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                  src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='LSTM',
-                 attention='dot', attn_hidden='linear', init_w=0.1):
+                 attention='dot', attn_hidden='linear', init_w=0.1, beam_width=1):
         super().__init__(embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                          src_EOS, tgt_BOS, tgt_EOS,
                          num_layers=num_layers, bidirectional=bidirectional,
-                         dropout=dropout, rnn=rnn)
+                         dropout=dropout, rnn=rnn, beam_width=beam_width)
 
         self.generator = MLP(dims=[self.hidden_size, tgt_vocab_size], dropout=dropout)
         if attention == 'dot':
@@ -137,13 +173,10 @@ class AttnSeq2Seq(Seq2Seq):
         self.initialize(init_w)
 
     def decode(self, inputs, encoded):
-        enc_hiddens = encoded['hiddens']
-        enc_outputs = encoded['outputs']
-        enc_seq_lens = encoded['lengths']
-        (decoded, dec_seq_lens), hiddens = self.decoder(inputs, enc_hiddens) # (batch, max(dec_seq_lens), hidden_size)
+        (decoded, dec_seq_lens), hiddens = self.decoder(inputs, encoded['hiddens']) # (batch, max(dec_seq_lens), hidden_size)
         # attention
-        attn_vecs, self.attn_weights = self.attention(queries=decoded, keys=enc_outputs, values=enc_outputs,
-                                       query_lens=dec_seq_lens, key_lens=enc_seq_lens)  # (batch, max(dec_seq_lens), hidden_size)
+        attn_vecs, self.attn_weights = self.attention(queries=decoded, keys=encoded['outputs'], values=encoded['outputs'],
+                                       query_lens=dec_seq_lens, key_lens=encoded['lengths'])  # (batch, max(dec_seq_lens), hidden_size)
 
         # decoded + attention
         if self.attn_hidden:
