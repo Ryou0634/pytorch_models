@@ -37,7 +37,7 @@ class BeamSearcher():
                 new_parent_hypos.append(len(new_hypos))
                 new_hypos.append({'score': scores[parent_hypo][idx],
                                   'seq': self.hypos[parent_hypo]['seq']+[next_token]})
-        next_tokens = torch.tensor(next_tokens)
+        next_tokens = log_p.new_tensor(next_tokens, dtype=torch.long)
         self.hypos = new_hypos
         self.parent_hypos = new_parent_hypos
         return next_tokens, old_parent_hypos
