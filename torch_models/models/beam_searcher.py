@@ -33,7 +33,7 @@ class BeamSearcher():
                 self.width -= 1
             else:
                 next_tokens.append(next_token)
-                old_parent_hypos.append(parent_hypo)
+                old_parent_hypos.append(int(parent_hypo))
                 new_parent_hypos.append(len(new_hypos))
                 new_hypos.append({'score': scores[parent_hypo][idx],
                                   'seq': self.hypos[parent_hypo]['seq']+[next_token]})

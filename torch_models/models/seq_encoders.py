@@ -14,20 +14,20 @@ class SeqEncoderBase(nn.Module):
         self.vocab_size = vocab_size
         self.embedding = nn.Embedding(vocab_size+1, embed_size, padding_idx=vocab_size)
 
-    def _pad_seqs(self, inputs, seq_lens):
+    def _pad_seqs(self, inputs):
+        seq_lens = torch.LongTensor([len(seq) for seq in inputs])
         padded_seqs = self.embedding.padding_idx*inputs[0].new_ones((len(inputs), seq_lens.max()))
         for i, (seq, seq_len) in enumerate(zip(inputs, seq_lens)):
             padded_seqs[i, :seq_len] = seq
-        return padded_seqs
+        return padded_seqs, seq_lens
 
 class PaddedEmbedding(SeqEncoderBase):
     def __init__(self, embed_size, vocab_size):
         super().__init__(embed_size, vocab_size)
 
     def forward(self, inputs):
-        seq_lens = torch.LongTensor([len(seq) for seq in inputs])
         # padding
-        padded_seqs = self._pad_seqs(inputs, seq_lens) # (batch, max_len)
+        padded_seqs, seq_lens = self._pad_seqs(inputs, seq_lens) # (batch, max_len)
         # get embedding
         embeds = self.embedding(padded_seqs) # (batch, max_len, embed_size)
         return (embeds, seq_lens), None
@@ -78,9 +78,8 @@ class RNNEncoder(SeqEncoderBase):
         self.num_directions = 1+self.bidirectional
 
     def get_packed_embeds(self, inputs):
-        seq_lens = torch.LongTensor([len(seq) for seq in inputs])
         # padding
-        padded_seqs = self._pad_seqs(inputs, seq_lens) # (batch, max_len)
+        padded_seqs, seq_lens = self._pad_seqs(inputs) # (batch, max_len)
         # sorting
         seq_lens, perm_idx = seq_lens.sort(descending=True)
         padded_seqs = padded_seqs[perm_idx]

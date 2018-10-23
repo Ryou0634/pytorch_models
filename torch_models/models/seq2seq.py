@@ -13,6 +13,7 @@ class Seq2SeqBase(nn.Module):
         self.tgt_EOS = tgt_EOS
         self.beam_width = beam_width
 
+
     def fit(self, inputs, targets, optimizer):
         if optimizer:
             self.train()
@@ -28,6 +29,72 @@ class Seq2SeqBase(nn.Module):
         targets_eos = self._append_EOS_flatten(targets)
         loss_item = self.generator.fit(decoded['outputs'], targets_eos, optimizer)
         return loss_item
+
+    def predict(self, inputs, max_len=100):
+        predicted = []
+        for inpt in inputs:
+            top_seqs = self.beam_search(inpt, max_len)
+            top_seq = max(top_seqs, key=lambda x: x['score'])['seq']
+            predicted.append(top_seq)
+        return predicted # List[List[int]]
+
+    def beam_search(self, input, max_len=50):
+        """
+        input allows only batchsize 1
+        During beam-search, computation is done with a batch_size of beam_width.
+        """
+        self.eval()
+        beam_searcher = BeamSearcher(self.beam_width, self.tgt_EOS)
+
+        with torch.no_grad():
+            # encoding
+            encoded = self.encode(input.repeat(self.beam_width, 1))
+            input_tokens = input[0].new_tensor([[self.tgt_BOS] for _ in range(self.beam_width)]) # (beam_width, 1)
+            for i in range(max_len):
+                decoded  = self.decode(input_tokens, encoded) # (beam_width, hidden_size)
+                last_hidden = self._get_last_hidden(decoded, beam_searcher.width, i)
+                log_p = F.log_softmax(self.generator.forward(last_hidden), dim=1) # (beam_width, tgt_vocab_size)
+                next_tokens, parent_hypos = beam_searcher.step(i, log_p)
+                if beam_searcher.width == 0: break
+                # preparing for the next iteration
+                input_tokens, encoded = self._update_beam(input_tokens, next_tokens, encoded, decoded, parent_hypos, beam_searcher)
+        return beam_searcher.hypos + beam_searcher.end_hypos
+
+    def _update_beam(self, input_tokens, next_tokens, encoded, decoded, parent_hypos, beam_searcher):
+       raise NotImplementedError()
+
+
+    def greedy_predict(self, inputs, max_len=50):
+        self.eval()
+        generated = [] # contains selected idxs in each time step
+        with torch.no_grad():
+            # encoding
+            encoded = self.encode(inputs) # encoded['outputs']: (batchsize, max_seq_len, size)
+            batchsize = len(inputs)
+            input_tokens = inputs[0].new_tensor([self.tgt_BOS for _ in range(batchsize)]).view(-1, 1) # (batchsize, 1)
+            end_flags = inputs[0].new_zeros(batchsize)
+            for i in range(max_len):
+                decoded  = self.decode(input_tokens, encoded)
+                last_hidden = self._get_last_hidden(decoded, batchsize, i) # (batchsize, hidden_size)
+                output_tokens = self.generator.predict(last_hidden) # (batchsize,)
+                generated.append(output_tokens)
+                end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
+                if end_flags.sum() == batchsize: break # end if all flags are 1
+                input_tokens, encoded = self._update(input_tokens, output_tokens, encoded, decoded)
+        generated = torch.stack(generated, dim=1)
+        return self._remove_EOS(generated) # List[torch.tensor]
+
+    def _get_last_hidden(self, decoded, batchsize, i):
+        raise NotImplementedError()
+
+    def _update(self, input_tokens, output_tokens, encoded, decoded):
+        raise NotImplementedError()
+
+    def encode(self, inputs):
+        raise NotImplementedError()
+
+    def decode(self, inputs, encoded):
+        raise NotImplementedError()
 
     def _remove_EOS(self, generated):
         outputs = []
@@ -93,55 +160,23 @@ class Seq2Seq(Seq2SeqBase):
         return {'outputs': dec_outputs,
                 'hiddens': hiddens}
 
+    # used in beam_search()
+    def _update_beam(self, input_tokens, next_tokens, encoded, decoded, parent_hypos, beam_searcher):
+        input_tokens = next_tokens.unsqueeze(1)
+        encoded['hiddens'] = self.decoder._reorder_hiddens(decoded['hiddens'], parent_hypos)
+        encoded['outputs'] = encoded['outputs'][:beam_searcher.width]
+        encoded['lengths'] = encoded['lengths'][:beam_searcher.width]
+        return input_tokens, encoded
 
-    def beam_search(self, input, max_len=100):
-        """input allows only batchsize 1"""
-        self.eval()
-        beam_searcher = BeamSearcher(self.beam_width, self.tgt_EOS)
+    # used in greedy_predict()
+    def _get_last_hidden(self, decoded, batchsize, i):
+        return decoded['outputs']
 
-        with torch.no_grad():
-            # encoding
-            encoded = self.encode(input.repeat(self.beam_width, 1))
-            input_tokens = input[0].new_tensor([[self.tgt_BOS] for _ in range(self.beam_width)]) # (beam_width, 1)
-            for i in range(max_len):
-                decoded  = self.decode(input_tokens, encoded) # (beam_width, hidden_size)
-                log_p = F.log_softmax(self.generator.forward(decoded['outputs']), dim=1) # (beam_width, tgt_vocab_size)
-                next_tokens, parent_hypos = beam_searcher.step(i, log_p)
-                if beam_searcher.width == 0: break
-                # preparing for the next iteration
-                input_tokens = next_tokens.view(beam_searcher.width, 1)
-                encoded['hiddens'] = self.decoder._reorder_hiddens(decoded['hiddens'], parent_hypos)
-                encoded['outputs'] = encoded['outputs'][:beam_searcher.width]
-                encoded['lengths'] = encoded['lengths'][:beam_searcher.width]
-        return beam_searcher.hypos + beam_searcher.end_hypos
+    def _update(self, input_tokens, output_tokens, encoded, decoded):
+        input_tokens = output_tokens.view(-1, 1)
+        encoded['hiddens'] = decoded['hiddens']
+        return input_tokens, encoded
 
-    def predict(self, inputs, max_len=100):
-        predicted = []
-        for inpt in inputs:
-            top_seqs = self.beam_search(inpt, max_len)
-            top_seq = max(top_seqs, key=lambda x: x['score'])['seq']
-            predicted.append(top_seq)
-        return predicted
-
-    def greedy_predict(self, inputs, max_len=50):
-        self.eval()
-        generated = [] # contains selected idxs in each time step
-        with torch.no_grad():
-            # encoding
-            encoded = self.encode(inputs) # (num_layers * num_directions, batch, hidden_size)
-            batchsize = len(inputs)
-            input_tokens = inputs[0].new_tensor([self.tgt_BOS for _ in range(batchsize)]).view(-1, 1) # (batchsize, 1)
-            end_flags = inputs[0].new_zeros(batchsize)
-            for i in range(max_len):
-                decoded  = self.decode(input_tokens, encoded) # (batchsize, hidden_size)
-                output_tokens = self.generator.predict(decoded['outputs']) # (batchsize,)
-                generated.append(output_tokens)
-                end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
-                if end_flags.sum() == batchsize: break # end if all flags are 1
-                input_tokens = output_tokens.view(-1, 1)
-                encoded['hiddens'] = decoded['hiddens']
-        generated = torch.stack(generated, dim=1)
-        return self._remove_EOS(generated)
 
 
 from .attentions import DotAttn

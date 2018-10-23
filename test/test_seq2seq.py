@@ -84,6 +84,7 @@ def get_toy_data_loader():
 from torch_models import AttnSeq2Seq, Seq2Seq
 from my_utils import Trainer, EvaluatorSeq, EvaluatorLoss
 from torch.optim import Adam, SGD
+import numpy as np
 
 import pytest
 @pytest.mark.parametrize(
@@ -107,3 +108,12 @@ def test_train(klass, measure):
                   evaluator=None, score_monitor=None)
     test_evaluator = EvaluatorSeq(model, test_loader, measure=measure)
     assert 0.8 < test_evaluator.evaluate()
+
+    # check if greedy_predict and predict(beam-search) give the same outputs.
+    gre_predicted = []
+    predicted = []
+    for inputs, target in test_loader:
+        gre_predicted += model.greedy_predict(inputs)
+        predicted += model.predict(inputs)
+    for gre, pre in zip(gre_predicted, predicted):
+        assert (np.array(gre) == np.array(pre)).all()

@@ -59,9 +59,9 @@ class MultiHeadedAttention(nn.Module):
         queries : torch.tensor (batch, n_queries, dim1)
         keys : torch.tensor (batch, n_keys , dim1) (this is also regarded as values)
         values : torch.tensor (batch, n_keys, dim_value)
-        query_lens : List[int]
+        query_lens : torch.LongTensor
             Contains the number of queries of each batch.
-        key_lens : List[int]
+        key_lens : torch.LongTensor
             Contains the number of keys of each batch.
         '''
 
@@ -72,7 +72,7 @@ class MultiHeadedAttention(nn.Module):
                       in zip([queries, keys, values], [self.Q_linear, self.K_linear, self.V_linear])]
         # attention
         multi_head_vecs, self.attn_weights = self.attention(Qs, Ks, Vs,
-                                             query_lens=query_lens*self.n_head, key_lens=key_lens*self.n_head)
+                        query_lens=query_lens.repeat(self.n_head), key_lens=key_lens.repeat(self.n_head))
         multi_head_vecs = torch.cat(multi_head_vecs.split(batchsize), dim=2) # (batchsize, n_queries, self.n_head*self.d_k)
         # output
         return self.out_linear(multi_head_vecs) # (batchsize, n_queries, input_size)
@@ -96,11 +96,11 @@ class EncoderLayer(nn.Module):
         self.layer_norms = nn.ModuleList([nn.LayerNorm(size) for _ in range(2)])
 
     def forward(self, inputs, seq_lens):
-        attn = self.attention(inputs, inputs, inputs, seq_lens, seq_lens)
+        attn = self.attention(inputs, inputs, inputs, seq_lens, seq_lens) # (batchsize, max_seq_len, size)
         h1 = self.layer_norms[0](attn + inputs)
         feeded = self.fc(h1)
         outputs = self.layer_norms[1](feeded+h1)
-        return outputs
+        return outputs # (batchsize, max_seq_len, size)
 
 class TransformerEncoder(nn.Module):
     def __init__(self, size, n_head, n_vocab, n_layers=6, dropout=0.1):
@@ -110,7 +110,7 @@ class TransformerEncoder(nn.Module):
         self.layers = nn.ModuleList([EncoderLayer(size, n_head, dropout) for _ in range(n_layers)])
 
     def forward(self, inputs):
-        embeds, enc_seq_lens = self.embedding(inputs)
+        embeds, enc_seq_lens = self.embedding(inputs) # embeds is padded. (batchsize, max_seq_len, size)
         x = self.pe(embeds)
         for layer in self.layers:
             x = layer(x, enc_seq_lens)
@@ -126,7 +126,7 @@ class DecoderLayer(nn.Module):
 
 
     def forward(self, inputs, seq_lens, enc_outputs, enc_seq_lens):
-        # inputs : (batchsize, max_seq_len, dim)
+        # inputs : (batchsize, max_seq_len, size)
         self_attn = self.self_attention(queries=inputs, keys=inputs, values=inputs,
                                         query_lens=seq_lens, key_lens=seq_lens)
         h1 = self.layer_norms[0](self_attn + inputs)
@@ -136,7 +136,7 @@ class DecoderLayer(nn.Module):
         h2 = self.layer_norms[1](src_tgt_attn+h1)
         feeded = self.fc(h2)
         outputs = self.layer_norms[2](feeded+h2)
-        return outputs
+        return outputs # (batchsize, max_seq_len, size)
 
 class TransformerDecoder(nn.Module):
     def __init__(self, size, n_head, n_vocab, n_layers=6, dropout=0.1):
@@ -146,7 +146,7 @@ class TransformerDecoder(nn.Module):
         self.layers = nn.ModuleList([DecoderLayer(size, n_head, dropout) for _ in range(n_layers)])
 
     def forward(self, inputs, enc_outputs, enc_seq_lens):
-        embeds, seq_lens = self.embedding(inputs)
+        embeds, seq_lens = self.embedding(inputs)  # embeds is padded. (batchsize, max_seq_len, size)
         x = self.pe(embeds)
         for layer in self.layers:
             x = layer(x, seq_lens, enc_outputs, enc_seq_lens)
@@ -172,33 +172,28 @@ class Transformer(Seq2SeqBase):
 
     def encode(self, inputs):
         inputs_EOS = self._append_EOS(inputs)
-        enc_outputs, enc_seq_lens = self.encoder(inputs_EOS)
+        enc_outputs, enc_seq_lens = self.encoder(inputs_EOS) # (batchsize, max_seq_len, size)
         return {'outputs': enc_outputs,
-                'length': enc_seq_lens}
+                'lengths': enc_seq_lens}
 
     def decode(self, inputs, encoded):
         enc_outputs = encoded['outputs']
-        enc_seq_lens = encoded['length']
-        decoded, dec_seq_lens = self.decoder(inputs, enc_outputs, enc_seq_lens)
-        dec_outputs = self._flatten_and_unpad(decoded, dec_seq_lens)
+        enc_seq_lens = encoded['lengths']
+        decoded, dec_seq_lens = self.decoder(inputs, enc_outputs, enc_seq_lens) # (batchsize, max_seq_len, size)
+        dec_outputs = self._flatten_and_unpad(decoded, dec_seq_lens) # (n_tokens, size)
         return {'outputs': dec_outputs}
 
-    def predict(self, inputs, max_len=100):
-        self.eval()
-        generated = []
-        with torch.no_grad():
-            # encoding
-            encoded = self.encode(inputs)
-            batchsize = len(inputs)
-            input_tokens = inputs[0].new_tensor([self.tgt_BOS for _ in range(batchsize)]).view(-1, 1)
-            end_flags = inputs[0].new_zeros(batchsize)
-            for i in range(max_len):
-                decoded = self.decode(input_tokens, encoded) # (n_tokens, dec_hidden_size)
-                output_tokens = self.generator.predict(decoded['outputs']) # (batchsize*seq_len)
-                output_tokens = output_tokens.view(batchsize, -1)[:, -1] #(batchsize, seq_len)[:, -1]
-                generated.append(output_tokens) # append the latest new tokens
-                end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
-                if end_flags.sum() == batchsize: break
-                input_tokens = torch.cat((input_tokens, output_tokens.unsqueeze(1)), dim=1)
-        generated = torch.stack(generated, dim=1).tolist()
-        return self._remove_EOS(generated)
+    # used in beam_search()
+    def _get_last_hidden(self, decoded, batchsize, i):
+        return decoded['outputs'].view(batchsize, i+1, -1)[:, -1] # extract the last one
+
+    # used in greedy_predict()
+    def _update(self, input_tokens, output_tokens, encoded, decoded):
+        input_tokens = torch.cat((input_tokens, output_tokens.unsqueeze(1)), dim=1)
+        return input_tokens, encoded
+
+    def _update_beam(self, input_tokens, next_tokens, encoded, decoded, parent_hypos, beam_searcher):
+        input_tokens = torch.cat((input_tokens[parent_hypos], next_tokens.unsqueeze(1)), dim=1)
+        encoded['outputs'] = encoded['outputs'][:beam_searcher.width]
+        encoded['lengths'] = encoded['lengths'][:beam_searcher.width]
+        return input_tokens, encoded

@@ -5,7 +5,7 @@ train = seq_10(5000)
 test = seq_10(500)
 device = get_device()
 trans_func = seq2label(device)
-train_loader = DataLoader(train, batch_size=16, trans_func=trans_func, shuffle=True)
+train_loader = DataLoader(train, batch_size=16, trans_func=trans_func)
 test_loader = DataLoader(test, batch_size=64, trans_func=trans_func)
 
 
