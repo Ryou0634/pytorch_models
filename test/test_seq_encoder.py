@@ -41,8 +41,8 @@ def test_RNN(rnn, enc, bidirectional, num_layers):
                              activation='Tanh', dropout=0, freeze_encoder=False).to(device)
     optimizer = Adam(model.parameters())
 
-    evaluator = EvaluatorC(model, test_loader)
     trainer = Trainer(model, train_loader)
     trainer.train_epoch(optimizer, max_epoch=1,
-                  evaluator=evaluator, score_monitor=None)
+                  evaluator=None, score_monitor=None)
+    evaluator = EvaluatorC(model, test_loader)
     assert evaluator.evaluate() > 0.85
