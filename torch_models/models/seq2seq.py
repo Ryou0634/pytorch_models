@@ -22,30 +22,30 @@ class Seq2SeqBase(nn.Module):
         # encoding
         encoded = self.encode(inputs) # (num_layers, batch, hidden_size)
         # decoding
-        BOS_targets = self._append_BOS(targets)
-        decoded = self.decode(BOS_targets, encoded)
+        bos_targets = self._append_BOS(targets)
+        decoded = self.decode(bos_targets, encoded)
         # predicting
-        targets_EOS = self._append_EOS_flatten(targets)
-        loss_item = self.generator.fit(decoded['outputs'], targets_EOS, optimizer)
+        targets_eos = self._append_EOS_flatten(targets)
+        loss_item = self.generator.fit(decoded['outputs'], targets_eos, optimizer)
         return loss_item
 
     def _remove_EOS(self, generated):
         outputs = []
         for seq in generated:
             if self.tgt_EOS in seq:
-                EOS_idx = seq.index(self.tgt_EOS)
+                EOS_idx = list(seq).index(self.tgt_EOS)
                 outputs.append(seq[:EOS_idx])
             else:
                 outputs.append(seq)
         return outputs
 
     def _append_EOS(self, inputs):
-        inputs_EOS = [torch.cat((inp, inp.new_tensor([self.src_EOS]))) for inp in inputs]
-        return inputs_EOS
+        inputs_eos = [torch.cat((inp, inp.new_tensor([self.src_EOS]))) for inp in inputs]
+        return inputs_eos
 
     def _append_BOS(self, targets):
-        BOS_targets = [torch.cat((target.new_tensor([self.tgt_BOS]), target)) for target in targets]
-        return BOS_targets
+        bos_targets = [torch.cat((target.new_tensor([self.tgt_BOS]), target)) for target in targets]
+        return bos_targets
 
     def _append_EOS_flatten(self, targets):
         EOS_targets = [torch.cat((target, target.new_tensor([self.tgt_EOS]))) for target in targets]
@@ -57,7 +57,6 @@ class Seq2SeqBase(nn.Module):
         flattened = torch.cat(unpadded, dim=0)
         return flattened # (n_tokens, embed_dim)
 
-import numpy as np
 class Seq2Seq(Seq2SeqBase):
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                  src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='LSTM',
@@ -82,8 +81,8 @@ class Seq2Seq(Seq2SeqBase):
                 nn.init.uniform_(p, -init_w, init_w)
 
     def encode(self, inputs):
-        inputs_EOS = self._append_EOS(inputs)
-        (enc_outputs, lengths), hiddens = self.encoder(inputs_EOS)
+        inputs_eos = self._append_EOS(inputs)
+        (enc_outputs, lengths), hiddens = self.encoder(inputs_eos)
         return {'outputs': enc_outputs, # (batch, seq_len, output_size)
                 'lengths': lengths,
                 'hiddens': hiddens}     # (num_layers * num_directions, batch, hidden_size)
@@ -98,7 +97,6 @@ class Seq2Seq(Seq2SeqBase):
     def beam_search(self, input, max_len=100):
         """input allows only batchsize 1"""
         self.eval()
-        generated = [] # contains selected idxs in each time step
         beam_searcher = BeamSearcher(self.beam_width, self.tgt_EOS)
 
         with torch.no_grad():
@@ -125,8 +123,7 @@ class Seq2Seq(Seq2SeqBase):
             predicted.append(top_seq)
         return predicted
 
-    def _greedy_predict(self, inputs, max_len=100):
-        # depricated
+    def greedy_predict(self, inputs, max_len=50):
         self.eval()
         generated = [] # contains selected idxs in each time step
         with torch.no_grad():
@@ -143,7 +140,7 @@ class Seq2Seq(Seq2SeqBase):
                 if end_flags.sum() == batchsize: break # end if all flags are 1
                 input_tokens = output_tokens.view(-1, 1)
                 encoded['hiddens'] = decoded['hiddens']
-        generated = torch.stack(generated, dim=1).tolist()
+        generated = torch.stack(generated, dim=1)
         return self._remove_EOS(generated)
 
 
