@@ -22,9 +22,9 @@ class PositionalEncoding(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
         pe = torch.zeros(max_len, embed_size)
-        position = torch.arange(0, max_len).unsqueeze(1)
+        position = torch.arange(0.0, max_len).unsqueeze(1)
         # Compute the positional encodings once in log space.
-        div_term = torch.exp(torch.arange(0, embed_size, 2) *
+        div_term = torch.exp(torch.arange(0.0, embed_size, 2) *
                              -(math.log(10000.0) / embed_size))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
