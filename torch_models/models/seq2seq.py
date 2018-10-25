@@ -31,42 +31,52 @@ class Seq2SeqBase(nn.Module):
         return loss_item
 
     def predict(self, inputs, max_len=100):
-        predicted = []
-        for inpt in inputs:
-            top_seqs = self.beam_search(inpt, max_len)
-            top_seq = max(top_seqs, key=lambda x: x['score'])['seq']
-            predicted.append(top_seq)
-        return predicted # List[List[int]]
+        return self.beam_search(inputs, max_len) # List[List[int]]
 
-    def beam_search(self, input, max_len=50):
+    def beam_search(self, inputs, max_len=50):
         """
         input allows only batchsize 1
         During beam-search, computation is done with a batch_size of beam_width.
         """
         self.eval()
-        beam_searcher = BeamSearcher(self.beam_width, self.tgt_EOS)
-
+        predicted = []
         with torch.no_grad():
+            batchsize = len(inputs)
             # encoding
-            encoded = self.encode(input.repeat(self.beam_width, 1))
-            input_tokens = input[0].new_tensor([[self.tgt_BOS] for _ in range(self.beam_width)]) # (beam_width, 1)
-            for i in range(max_len):
-                decoded  = self.decode(input_tokens, encoded) # (beam_width, hidden_size)
-                last_hidden = self._get_last_hidden(decoded, beam_searcher.width, i)
-                log_p = F.log_softmax(self.generator.forward(last_hidden), dim=1) # (beam_width, tgt_vocab_size)
-                next_tokens, parent_hypos = beam_searcher.step(i, log_p)
-                if beam_searcher.width == 0: break
-                # preparing for the next iteration
-                input_tokens, encoded = self._update_beam(input_tokens, next_tokens, encoded, decoded, parent_hypos, beam_searcher)
-        return beam_searcher.hypos + beam_searcher.end_hypos
+            encoded_batch = self.encode(inputs)
+            for n in range(batchsize):
+                encoded = self._extract_repeat(encoded_batch, n, self.beam_width)
+                input_tokens = inputs[0].new_tensor([[self.tgt_BOS] for _ in range(self.beam_width)]) # (beam_width, 1)
+                beam_searcher = BeamSearcher(self.beam_width, self.tgt_EOS)
+                for i in range(max_len):
+                    decoded  = self.decode(input_tokens, encoded) # (beam_width, hidden_size)
+                    last_hidden = self._get_last_hidden(decoded, beam_searcher.width, i)
+                    log_p = F.log_softmax(self.generator.forward(last_hidden), dim=1) # (beam_width, tgt_vocab_size)
+                    next_tokens, parent_hypos = beam_searcher.step(i, log_p)
+                    if beam_searcher.width == 0: break
+                    # preparing for the next iteration
+                    input_tokens, encoded = self._update_beam(input_tokens, next_tokens, encoded, decoded, parent_hypos, beam_searcher)
+                top_seqs = beam_searcher.hypos + beam_searcher.end_hypos
+                predicted.append(max(top_seqs, key=lambda x: x['score'])['seq'])
+        return predicted
 
     def _update_beam(self, input_tokens, next_tokens, encoded, decoded, parent_hypos, beam_searcher):
        raise NotImplementedError()
 
+    def _extract_repeat(self, encoded_batch, n, beam_width):
+        outputs = encoded_batch['outputs'][n].repeat(beam_width, 1, 1)
+        lengths = encoded_batch['lengths'][n].repeat(beam_width)
+        encoded = {'outputs': outputs, 'lengths': lengths}
+        if 'hiddens' in encoded_batch.keys():
+            hiddens = self.encoder._reorder_hiddens(encoded_batch['hiddens'], [n])
+            hiddens = self.encoder._copy_hiddens(hiddens, beam_width)
+            encoded.update({'hiddens': hiddens})
+        return encoded
+
 
     def greedy_predict(self, inputs, max_len=50):
         self.eval()
-        generated = [] # contains selected idxs in each time step
+        predicted = [] # contains selected idxs in each time step
         with torch.no_grad():
             # encoding
             encoded = self.encode(inputs) # encoded['outputs']: (batchsize, max_seq_len, size)
@@ -77,12 +87,12 @@ class Seq2SeqBase(nn.Module):
                 decoded  = self.decode(input_tokens, encoded)
                 last_hidden = self._get_last_hidden(decoded, batchsize, i) # (batchsize, hidden_size)
                 output_tokens = self.generator.predict(last_hidden) # (batchsize,)
-                generated.append(output_tokens)
+                predicted.append(output_tokens)
                 end_flags.masked_fill_(output_tokens.eq(self.tgt_EOS), 1) # set 1 in end_flags if EOS
                 if end_flags.sum() == batchsize: break # end if all flags are 1
                 input_tokens, encoded = self._update(input_tokens, output_tokens, encoded, decoded)
-        generated = torch.stack(generated, dim=1)
-        return self._remove_EOS(generated) # List[torch.tensor]
+        predicted = torch.stack(predicted, dim=1)
+        return self._remove_EOS(predicted) # List[torch.tensor]
 
     def _get_last_hidden(self, decoded, batchsize, i):
         raise NotImplementedError()
@@ -96,9 +106,9 @@ class Seq2SeqBase(nn.Module):
     def decode(self, inputs, encoded):
         raise NotImplementedError()
 
-    def _remove_EOS(self, generated):
+    def _remove_EOS(self, predicted):
         outputs = []
-        for seq in generated:
+        for seq in predicted:
             if self.tgt_EOS in seq:
                 EOS_idx = list(seq).index(self.tgt_EOS)
                 outputs.append(seq[:EOS_idx])

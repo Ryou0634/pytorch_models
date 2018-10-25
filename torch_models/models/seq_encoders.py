@@ -93,11 +93,16 @@ class RNNEncoder(SeqEncoderBase):
     def _reorder_hiddens(self, hiddens, perm_idx):
         if isinstance(self.rnn, nn.LSTM):
             hiddens, cells = hiddens
-            hiddens = hiddens[:, perm_idx]
-            cells = cells[:, perm_idx]
-            return (hiddens, cells)
+            return (hiddens[:, perm_idx], cells[:, perm_idx])
         else:
-            return hiddens[:, unperm_idx]
+            return hiddens[:, perm_idx]
+
+    def _copy_hiddens(self, hiddens, n_copy):
+        if isinstance(self.rnn, nn.LSTM):
+            hiddens, cells = hiddens
+            return (hiddens.repeat(1, n_copy, 1), cells.repeat(1, n_copy, 1))
+        else:
+            return hiddens.repeat(1, n_copy, 1)
 
     def _add_along_direction(self, tensors, hiddens):
         batchsize = tensors.size(0)

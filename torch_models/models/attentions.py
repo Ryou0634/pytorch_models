@@ -17,11 +17,15 @@ class DotAttn(nn.Module):
         queries : torch.tensor (batch, n_queries, dim1)
         keys : torch.tensor (batch, n_keys , dim1)
         values : torch.tensor (batch, n_keys, dim_value)
-        query_lens : List[int]
+        query_lens : torch.LongTensor
             Contains the number of queries of each batch.
-        key_lens : List[int]
+        key_lens : torch.LongTensor
             Contains the number of keys of each batch.
         '''
+        # checks inputs
+        self._check_len(queries, query_lens)
+        self._check_len(keys, key_lens)
+        # computes attention
         scores = torch.bmm(queries, keys.permute(0, 2, 1)) # (batch * n_queries * dim) @ (batch * dim * n_keys)
         if self.scaled:
             dim = queries.size(2)
@@ -43,6 +47,9 @@ class DotAttn(nn.Module):
         weights = F.softmax(scores, dim=2)
         weights = torch.where(torch.isnan(weights), weights.new_tensor(0.), weights) # to avoid nan
         return weights
+
+    def _check_len(self, tensor, lens):
+        assert tensor.size(0) == lens.size(0)
 
 # class BiLinearAttn(nn.Module):
 #     def __init__(self, dim1, dim2):
