@@ -49,7 +49,6 @@ class MultiHeadedAttention(nn.Module):
         self.V_linear = nn.Linear(input_size, input_size)
         self.out_linear = nn.Linear(input_size, input_size)
         self.attention = DotAttn(scaled=True, subsequent_mask=subsequent_mask)
-        self.attn_weights = None
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, queries, keys, values, key_lens=None, query_lens=None):
@@ -71,7 +70,7 @@ class MultiHeadedAttention(nn.Module):
         Qs, Ks, Vs = [torch.cat(l(x).split(self.d_k, dim=2)) for x, l
                       in zip([queries, keys, values], [self.Q_linear, self.K_linear, self.V_linear])]
         # attention
-        multi_head_vecs, self.attn_weights = self.attention(Qs, Ks, Vs,
+        multi_head_vecs  = self.attention(Qs, Ks, Vs,
                         query_lens=query_lens.repeat(self.n_head), key_lens=key_lens.repeat(self.n_head))
         multi_head_vecs = torch.cat(multi_head_vecs.split(batchsize), dim=2) # (batchsize, n_queries, self.n_head*self.d_k)
         # output

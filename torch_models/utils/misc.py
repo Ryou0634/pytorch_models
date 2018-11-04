@@ -8,8 +8,8 @@ def get_device(show_log=True):
     return device
 
 from my_utils.misc import read_vecfile
-def init_embed(embedding, vocab_dict, vecfile):
-    vecs = read_vecfile(vecfile)
+def init_embed(embedding, vocab_dict, vecfile, dim=300):
+    vecs = read_vecfile(vecfile, dim)
     for w, idx in vocab_dict.stoi.items():
         try:
             embedding.weight.data[idx] = torch.from_numpy(vecs[w]).to(embedding.device)

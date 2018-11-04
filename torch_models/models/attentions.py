@@ -4,19 +4,39 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class DotAttn(nn.Module):
-    def __init__(self, scaled=False, subsequent_mask=False):
+class AttentionBase(nn.Module):
+    def __init__(self, dim_q=None, dim_k=None, dim_v=None,
+                 subsequent_mask=False, fuse_query=None):
+        '''
+        Parameters
+        -----------
+        dim_q : int
+            This must be specified in BiLinearAttn or when fuse_query = 'linear'.
+        dim_k : int
+            This must be specified in BiLinearAttn.
+        dim_v : int
+            This must be specified when fuse_query = 'linear'.
+        subsequent_mask : bool
+            If True, apply subsequent mask when computing softmax.
+        fuse_query : None, 'linear', 'add'
+            Specify how to fuse attention vectors and query vectors.
+        '''
         super().__init__()
-        self.scaled = scaled
         self.subsequent_mask = subsequent_mask
+
+        assert fuse_query in [None, 'linear', 'add']
+        self.fuse_query = fuse_query
+        if self.fuse_query == 'linear':
+            self.fuse_W = nn.Linear(dim_v+dim_q, dim_v)
+        self.weights = None
 
     def forward(self, queries, keys, values, query_lens, key_lens):
         '''
         Parameters
         -----------
-        queries : torch.tensor (batch, n_queries, dim1)
-        keys : torch.tensor (batch, n_keys , dim1)
-        values : torch.tensor (batch, n_keys, dim_value)
+        queries : torch.tensor (batch, n_queries, dim_q)
+        keys : torch.tensor (batch, n_keys , dim_k)
+        values : torch.tensor (batch, n_keys, dim_v)
         query_lens : torch.LongTensor
             Contains the number of queries of each batch.
         key_lens : torch.LongTensor
@@ -26,12 +46,27 @@ class DotAttn(nn.Module):
         self._check_len(queries, query_lens)
         self._check_len(keys, key_lens)
         # computes attention
-        scores = torch.bmm(queries, keys.permute(0, 2, 1)) # (batch * n_queries * dim) @ (batch * dim * n_keys)
-        if self.scaled:
-            dim = queries.size(2)
-            scores = scores/math.sqrt(dim)
-        weights = self._masked_softmax(scores, query_lens, key_lens) # (batch, max(n_queries), max(n_keys))
-        return torch.bmm(weights, values), weights # (batch, max(n_queries), dim_value)
+        scores = self.compute_score(queries, keys)
+        weights = self._masked_softmax(scores, query_lens, key_lens) # (batch, max(query_lens), max(n_keys))
+        self.weights = weights # for debugging or analyzing
+        attn_vecs = torch.bmm(weights, values) # (batch, max(key_lens), dim_v)
+        if self.fuse_query:
+            return self._fuse_attn_query(attn_vecs, queries)
+        else:
+            return attn_vecs
+
+    def _fuse_attn_query(self, attn_vecs, queries):
+        if self.fuse_query == 'linear':
+            fused = torch.tanh(self.fuse_W(torch.cat((queries, attn_vecs), dim=2)))
+        elif self.fuse_query == 'add':
+            fused = queries + attn_vecs
+        return fused
+
+    def compute_score(self, queries, keys):
+        raise NotImplementedError()
+
+    def _check_len(self, tensor, lens):
+        assert tensor.size(0) == lens.size(0)
 
     def _masked_softmax(self, scores, query_lens, key_lens):
         # masking
@@ -48,17 +83,27 @@ class DotAttn(nn.Module):
         weights = torch.where(torch.isnan(weights), weights.new_tensor(0.), weights) # to avoid nan
         return weights
 
-    def _check_len(self, tensor, lens):
-        assert tensor.size(0) == lens.size(0)
+class DotAttn(AttentionBase):
+    def __init__(self, dim_q=None, dim_k=None, dim_v=None, subsequent_mask=None, fuse_query=None, scaled=False):
+        super().__init__(dim_q=dim_q, dim_k=dim_k, dim_v=dim_v,
+                         subsequent_mask=subsequent_mask, fuse_query=fuse_query)
+        self.scaled = scaled
 
-# class BiLinearAttn(nn.Module):
-#     def __init__(self, dim1, dim2):
-#         self.linear = nn.Linear(dim1, dim2)
-#
-#     def __call__(self, keys, queries):
-#         values = torch.where((keys == float('-inf')), torch.tensor(0.), keys)
-#         queries = self.linear(queries)
-#         scores = torch.bmm(queries, keys.permute(0, 2, 1)) # (batch * 1 * dim) @ (batch * dim * n_keys)
-#         scores = torch.where(torch.isnan(scores), torch.tensor(float('-inf')), scores) # to avoid nan
-#         weights = F.softmax(scores, dim=2)
-#         return torch.bmm(weights, values)
+    def compute_score(self, queries, keys):
+        scores = torch.bmm(queries, keys.permute(0, 2, 1)) # (batch * n_queries * dim_q) @ (batch * dim_k * n_keys)
+        if self.scaled:
+            dim = queries.size(2)
+            scores = scores/math.sqrt(dim)
+        return scores
+
+class BiLinearAttn(AttentionBase):
+    def __init__(self, dim_q, dim_k, dim_v=None, subsequent_mask=None, fuse_query='linear'):
+        super().__init__(dim_q=dim_q, dim_k=dim_k, dim_v=dim_v,
+                         subsequent_mask=subsequent_mask, fuse_query=fuse_query)
+        self.linear = nn.Linear(dim_q, dim_k, bias=False)
+
+
+    def compute_score(self, queries, keys):
+        queries = self.linear(queries) # (batch, n_queries, dim_q) @ (dim_q, dim_k)
+        scores = torch.bmm(queries, keys.permute(0, 2, 1)) # (batch, n_queries, dim_k) @ (batch, dim_k, n_keys)
+        return scores

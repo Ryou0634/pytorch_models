@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+
 class SeqEncoderBase(nn.Module):
     '''
     Sequence encoder takes sequences as input, transform them into embeddings,
@@ -20,35 +21,6 @@ class SeqEncoderBase(nn.Module):
         for i, (seq, seq_len) in enumerate(zip(inputs, seq_lens)):
             padded_seqs[i, :seq_len] = seq
         return padded_seqs, seq_lens
-
-class PaddedEmbedding(SeqEncoderBase):
-    def __init__(self, embed_size, vocab_size):
-        super().__init__(embed_size, vocab_size)
-
-    def forward(self, inputs):
-        # padding
-        padded_seqs, seq_lens = self._pad_seqs(inputs, seq_lens) # (batch, max_len)
-        # get embedding
-        embeds = self.embedding(padded_seqs) # (batch, max_len, embed_size)
-        return (embeds, seq_lens), None
-
-class BoV(SeqEncoderBase):
-    def __init__(self, embed_size, vocab_size):
-        super().__init__(embed_size, vocab_size)
-        self.output_size = embed_size
-
-    def _get_embeds(self, inputs):
-        # flatten inputs, get embeddings, then split them back
-        seq_lengths = [len(seq) for seq in inputs]
-        cat_seqs = torch.cat(inputs)
-        embed_seqs = self.embedding(cat_seqs).split(seq_lengths)
-        return embed_seqs
-
-    def forward(self, inputs):
-        embed_seqs = self._get_embeds(inputs)
-        averaged = [torch.mean(embed_seqs[i], dim=0) for i in range(len(embed_seqs))]
-        return torch.stack(averaged)
-
 
 
 class RNNEncoder(SeqEncoderBase):
@@ -180,41 +152,3 @@ class RNNEncoder(SeqEncoderBase):
         if self.bidirectional and self.bidir_type == 'add':
             tensors, hiddens = self._add_along_direction(tensors, hiddens)
         return tensors, hiddens
-
-class RNNLastHidden(RNNEncoder):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional='cat', num_layers=1, dropout=0, rnn='LSTM'):
-        super().__init__(embed_size=embed_size, hidden_size=hidden_size, vocab_size=vocab_size,
-                         bidirectional=bidirectional, num_layers=num_layers, dropout=dropout, rnn=rnn)
-
-    def forward(self, inputs):
-        packed_embeds, perm_idx = self.get_packed_embeds(inputs)
-        _, hiddens = self.rnn(packed_embeds) # (num_layers * num_directions, batch, hidden_size)
-        if isinstance(self.rnn, nn.LSTM):
-            hiddens = hiddens[0]
-        hiddens = hiddens.view(self.num_layers, self.num_directions, -1, self.hidden_size)
-        if not self.bidirectional:
-            hidden = hiddens[-1].squeeze(0)
-        if self.bidirectional and self.bidir_type == 'add':
-            hidden = hiddens.sum(dim=1) # (num_layers, batch, hidden_size)
-            hidden = hidden[-1] # (batch, hidden_size)
-        if self.bidirectional and self.bidir_type == 'cat':
-            hidden = torch.cat([tensor for tensor in hiddens[-1]], dim=1) # (batch, output_size)
-        _, unperm_idx = perm_idx.sort()
-        return hidden[unperm_idx] # (batch, output_size)
-
-class RNNMaxPool(RNNEncoder):
-    def __init__(self, embed_size, hidden_size, vocab_size, bidirectional='cat', num_layers=1, dropout=0, rnn='LSTM'):
-        super().__init__(embed_size, hidden_size, vocab_size, bidirectional, num_layers, dropout, rnn)
-
-    def forward(self, inputs):
-        packed_embeds, perm_idx = self.get_packed_embeds(inputs)
-
-        outputs, _ = self.rnn(packed_embeds) # (batch, seq_len, num_directions * hidden_size)
-        tensors, lengths = pad_packed_sequence(outputs, batch_first=True)
-        if self.bidirectional and self.bidir_type == 'add':
-            tensors = tensors.view(len(inputs), -1, self.num_directions, self.hidden_size).sum(dim=2) # (batch, seq_len, hidden_size)
-        for tensor, length in zip(tensors, lengths):
-            tensor[length:] = float('-inf')
-        pooled, _ = torch.max(tensors, dim=1)
-        _, unperm_idx = perm_idx.sort()
-        return pooled[unperm_idx] # (batch, output_size)

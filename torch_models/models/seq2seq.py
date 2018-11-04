@@ -1,8 +1,8 @@
 from torch_models.models import MLP, RNNEncoder, BeamSearcher
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 
 
 class Seq2SeqBase(nn.Module):
@@ -12,7 +12,6 @@ class Seq2SeqBase(nn.Module):
         self.tgt_BOS = tgt_BOS
         self.tgt_EOS = tgt_EOS
         self.beam_width = beam_width
-
 
     def fit(self, inputs, targets, optimizer):
         if optimizer:
@@ -30,12 +29,14 @@ class Seq2SeqBase(nn.Module):
         loss_item = self.generator.fit(decoded['outputs'], targets_eos, optimizer)
         return loss_item
 
-    def predict(self, inputs, max_len=100):
-        return self.beam_search(inputs, max_len) # List[List[int]]
+    def predict(self, inputs, max_len=50):
+        if self.beam_width == 1:
+            return self.greedy_predict(inputs, max_len)
+        else:
+            return self.beam_search(inputs, max_len) # List[List[int]]
 
     def beam_search(self, inputs, max_len=50):
         """
-        input allows only batchsize 1
         During beam-search, computation is done with a batch_size of beam_width.
         """
         self.eval()
@@ -132,12 +133,12 @@ class Seq2SeqBase(nn.Module):
         # decoded: (batch, max_length, embed_dim)
         unpadded = [batch[:l] for batch, l in zip(decoded, lengths)]
         flattened = torch.cat(unpadded, dim=0)
-        return flattened # (n_tokens, embed_dim)
+        return flattened # (batch_sizes, embed_dim)
 
 class Seq2Seq(Seq2SeqBase):
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                  src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='LSTM',
-                 init_w=0.1, beam_width=1):
+                 init_w=0.1, beam_width=1, input_feeding=False):
         if bidirectional:
             bidir_type = 'add'
         else:
@@ -146,8 +147,12 @@ class Seq2Seq(Seq2SeqBase):
         self.encoder = RNNEncoder(embed_size, hidden_size, src_vocab_size,
                                   bidirectional=bidir_type, num_layers=num_layers, dropout=dropout, rnn=rnn)
         self.hidden_size = hidden_size
+
+        feed_size = hidden_size if input_feeding else 0
+        self.input_feeding = input_feeding
         self.decoder = RNNEncoder(embed_size, self.hidden_size, tgt_vocab_size,
-                                   bidirectional=None, num_layers=num_layers, dropout=dropout, rnn=rnn)
+                                   bidirectional=None, num_layers=num_layers, dropout=dropout, rnn=rnn,
+                                   feed_size=feed_size)
         self.generator = MLP(dims=[self.hidden_size, tgt_vocab_size], dropout=dropout)
 
         self.initialize(init_w)
@@ -188,43 +193,73 @@ class Seq2Seq(Seq2SeqBase):
         return input_tokens, encoded
 
 
-
-from .attentions import DotAttn
+from .attentions import DotAttn, BiLinearAttn
 class AttnSeq2Seq(Seq2Seq):
     # A fairly standard encoder-decoder architecture with the global attention mechanism in Luong et al. (2015).
     def __init__(self, embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
-                 src_EOS, tgt_BOS, tgt_EOS, num_layers=1, bidirectional=False, dropout=0, rnn='LSTM',
-                 attention='dot', attn_hidden='linear', init_w=0.1, beam_width=1):
+                 src_EOS, tgt_BOS, tgt_EOS, num_layers=2, bidirectional='add', dropout=0.1, rnn='LSTM',
+                 attention='bilinear', fuse_query='linear', init_w=0.1, beam_width=1, input_feeding=False):
         super().__init__(embed_size, hidden_size, src_vocab_size, tgt_vocab_size,
                          src_EOS, tgt_BOS, tgt_EOS,
                          num_layers=num_layers, bidirectional=bidirectional,
-                         dropout=dropout, rnn=rnn, beam_width=beam_width)
+                         dropout=dropout, rnn=rnn, beam_width=beam_width, input_feeding=input_feeding)
 
         self.generator = MLP(dims=[self.hidden_size, tgt_vocab_size], dropout=dropout)
+        assert attention in ['dot', 'bilinear']
         if attention == 'dot':
-            self.attention = DotAttn()
-        self.attn_weights = None
-
-        if attn_hidden == 'linear':
-            self.attn_hidden = nn.Linear(self.hidden_size*2, self.hidden_size)
-        elif attn_hidden == 'add':
-            self.attn_hidden = None
-        else:
-            raise Exception("attn_hidden: ['linear', 'add']")
+            self.attention = DotAttn(dim_q=hidden_size, dim_k=hidden_size, dim_v=hidden_size, fuse_query=fuse_query)
+        elif attention == 'bilinear':
+            self.attention = BiLinearAttn(dim_q=hidden_size, dim_k=hidden_size, dim_v=hidden_size, fuse_query=fuse_query)
 
         self.initialize(init_w)
 
     def decode(self, inputs, encoded):
         (decoded, dec_seq_lens), hiddens = self.decoder(inputs, encoded['hiddens']) # (batch, max(dec_seq_lens), hidden_size)
         # attention
-        attn_vecs, self.attn_weights = self.attention(queries=decoded, keys=encoded['outputs'], values=encoded['outputs'],
-                                       query_lens=dec_seq_lens, key_lens=encoded['lengths'])  # (batch, max(dec_seq_lens), hidden_size)
-
-        # decoded + attention
-        if self.attn_hidden:
-            decoded_attn = torch.tanh(self.attn_hidden(torch.cat((decoded, attn_vecs), dim=2)))
-        else:
-            decoded_attn = decoded + attn_vecs
-        decoded_attn = self._flatten_and_unpad(decoded_attn, dec_seq_lens) # (n_tokens, hidden_size*2)
-        return {'outputs': decoded_attn,
+        attn_vecs  = self.attention(queries=decoded, keys=encoded['outputs'], values=encoded['outputs'],
+                                    query_lens=dec_seq_lens, key_lens=encoded['lengths'])  # (batch, max(dec_seq_lens), hidden_size)
+        attn_vecs = self._flatten_and_unpad(attn_vecs, dec_seq_lens) # (n_tokens, hidden_size*2)
+        return {'outputs': attn_vecs,
                 'hiddens': hiddens}
+
+    def decode_input_feeding(self, inputs, encoded):
+        padded_seqs, dec_seq_lens, perm_idx = self.decoder.pad_and_sort_inputs(inputs)
+
+        # compute outputs
+        batch_sizes = self._lengths_to_batchsize(dec_seq_lens) #(max_len, )
+        max_batch = len(inputs)
+        decoded_list = []
+        # sort encoded
+        hiddens = self.decoder._reorder_hiddens(encoded['hiddens'], perm_idx)
+        enc_outputs = encoded['outputs'][perm_idx]
+        enc_lengths = encoded['lengths'][perm_idx]
+        feed_vec = encoded['outputs'].new_zeros((max_batch, self.hidden_size)) if self.input_feeding else None
+        for i, batch_size in enumerate(batch_sizes):
+            batch_size = batch_size.item()
+            hiddens = self.decoder._reorder_hiddens(hiddens, torch.arange(batch_size, dtype=torch.long))
+            if self.input_feeding:
+                feed_vec = feed_vec[:batch_size]
+            decoded, hiddens = self.decoder.forward_step(padded_seqs[:batch_size, i], hiddens, feed_vec=feed_vec)
+            # (batch, 1, num_directions * hidden_size), (num_layers * num_directions, batch, hidden_size)
+            attn_vecs = self.attention(queries=decoded, keys=enc_outputs[:batch_size], values=enc_outputs[:batch_size],
+                                       query_lens=enc_lengths.new_ones(batch_size), key_lens=enc_lengths[:batch_size])
+            if self.input_feeding:
+                feed_vec = attn_vecs.squeeze(1)
+            if attn_vecs.size(0) < max_batch:
+                # pad again
+                attn_vecs = torch.cat((attn_vecs, attn_vecs.new_zeros((max_batch - attn_vecs.size(0), 1, attn_vecs.size(2)))), dim=0)
+            decoded_list.append(attn_vecs)
+
+        # sort into the original order
+        _, unperm_idx = perm_idx.sort()
+        decoded = torch.cat(decoded_list, dim=1)[unperm_idx] # (batch, max(dec_seq_lens), hidden_size)
+        dec_seq_lens = dec_seq_lens[unperm_idx]
+        decoded = self._flatten_and_unpad(decoded, dec_seq_lens)
+        return decoded
+
+
+    def _lengths_to_batchsize(self, seq_lens):
+        n_tokens = torch.zeros(max(seq_lens).item(), dtype=torch.long)
+        for l in seq_lens:
+            n_tokens[:l] += 1
+        return n_tokens

@@ -87,17 +87,11 @@ from torch.optim import Adam, SGD
 import numpy as np
 
 import pytest
-@pytest.mark.parametrize(
-    "klass, measure", [
-        (Seq2Seq, "sent_BLEU"),
-        (AttnSeq2Seq, "BLEU"),
-    ]
-)
-def test_train(klass, measure):
+def test_seq2seq():
     train_loader, test_loader, src_dict, tgt_dict = get_toy_data_loader()
     embed_size=64
     dropout = 0
-    model = klass(embed_size=embed_size, hidden_size=embed_size, src_vocab_size=len(src_dict), tgt_vocab_size=len(tgt_dict),
+    model = Seq2Seq(embed_size=embed_size, hidden_size=embed_size, src_vocab_size=len(src_dict), tgt_vocab_size=len(tgt_dict),
                         src_EOS=src_dict('<EOS>'), tgt_BOS=tgt_dict('<BOS>'), tgt_EOS=tgt_dict('<EOS>'),
                         num_layers=1, bidirectional=True, dropout=dropout, rnn='LSTM')
 
@@ -106,14 +100,62 @@ def test_train(klass, measure):
     trainer = Trainer(model, train_loader)
     trainer.train_epoch(optimizer, max_epoch=5,
                   evaluator=None, score_monitor=None)
-    test_evaluator = EvaluatorSeq(model, test_loader, measure=measure)
+    test_evaluator = EvaluatorSeq(model, test_loader, measure='sent_BLEU')
     assert 0.8 < test_evaluator.evaluate()
 
     # check if greedy_predict and predict(beam-search) give the same outputs.
     gre_predicted = []
     predicted = []
+    model.beam_width = 1
     for inputs, target in test_loader:
         gre_predicted += model.greedy_predict(inputs)
-        predicted += model.predict(inputs)
+        predicted += model.beam_search(inputs)
     for gre, pre in zip(gre_predicted, predicted):
         assert (np.array(gre) == np.array(pre)).all()
+
+@pytest.mark.parametrize(
+    "rnn, attention, fuse_query", [
+        ('LSTM', 'dot', 'add'),
+        ('GRU', 'bilinear', 'linear'),
+    ]
+)
+def test_attnseq2seq(rnn, attention, fuse_query):
+    train_loader, test_loader, src_dict, tgt_dict = get_toy_data_loader()
+    embed_size=64
+    dropout = 0
+    model = AttnSeq2Seq(embed_size=embed_size, hidden_size=embed_size, src_vocab_size=len(src_dict), tgt_vocab_size=len(tgt_dict),
+                        src_EOS=src_dict('<EOS>'), tgt_BOS=tgt_dict('<BOS>'), tgt_EOS=tgt_dict('<EOS>'),
+                        num_layers=1, bidirectional=True, dropout=dropout, rnn=rnn,
+                        attention=attention, fuse_query=fuse_query)
+
+    optimizer = Adam(model.parameters())
+
+    trainer = Trainer(model, train_loader)
+    trainer.train_epoch(optimizer, max_epoch=5,
+                  evaluator=None, score_monitor=None)
+    test_evaluator = EvaluatorSeq(model, test_loader, measure='BLEU')
+    assert 0.8 < test_evaluator.evaluate()
+
+@pytest.mark.parametrize(
+    "rnn, attention, fuse_query", [
+        ('LSTM', 'dot', 'add'),
+        ('GRU', 'bilinear', 'linear'),
+    ]
+)
+def test_decode(rnn, attention, fuse_query):
+    train_loader, test_loader, src_dict, tgt_dict = get_toy_data_loader()
+    embed_size=64
+    dropout = 0
+    model = AttnSeq2Seq(embed_size=embed_size, hidden_size=embed_size, src_vocab_size=len(src_dict), tgt_vocab_size=len(tgt_dict),
+                        src_EOS=src_dict('<EOS>'), tgt_BOS=tgt_dict('<BOS>'), tgt_EOS=tgt_dict('<EOS>'),
+                        num_layers=1, bidirectional=True, dropout=dropout, rnn=rnn,
+                        attention=attention, fuse_query=fuse_query)
+    inputs, targets = next(train_loader)
+    encoded = model.encode(inputs)
+    decoded1 = model.decode_input_feeding(targets, encoded)
+    decoded2 = model.decode(targets, encoded)
+    assert (decoded1 == decoded2).all()
+
+
+
+
